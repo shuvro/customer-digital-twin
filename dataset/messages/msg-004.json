@@ -1,0 +1,9 @@
+{
+  "id": "msg-004",
+  "source": "message",
+  "messageDate": "2025-04-01T13:20:00Z",
+  "channel": "sms",
+  "from": "+34 612 345 678",
+  "to": "+49 800 INSURANCE",
+  "body": "Hi this is Maria Garcia Lopez, DOB 14/03/1985. Spanish national, tax ID 12345678A. I sent an email last month about life insurance. I'm still at my address in Madrid, Calle Gran Vía 28. Can you confirm you received my application? I'm also a woman if that matters for the rates. Thanks."
+}

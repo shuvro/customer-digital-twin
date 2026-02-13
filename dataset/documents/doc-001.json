@@ -1,0 +1,8 @@
+{
+  "id": "doc-001",
+  "source": "document",
+  "messageDate": "2025-01-15T00:00:00Z",
+  "documentType": "insurance_application",
+  "title": "Life Insurance Application Form",
+  "body": "INSURANCE APPLICATION FORM\n\nDate: 15 January 2025\nApplication Type: Term Life Insurance\n\nPERSONAL INFORMATION\n-------------------\nFull Name: María García López\nDate of Birth: 14 March 1985\nGender: Female\nNationality: Spanish\nTax Identification Number: 12345678A\nMarital Status: Single\n\nCONTACT DETAILS\n---------------\nAddress: Calle Gran Vía 28, 3º Izquierda, 28013 Madrid, Spain\nTelephone: +34 612 345 678\nEmail: m.garcia85@gmail.com\n\nEMPLOYMENT\n----------\nOccupation: Software Developer\nEmployer: MadridSoft S.L.\nAnnual Income: €45,000\n\nHEALTH DECLARATION\n------------------\nSmoker: No\nPre-existing conditions: None declared\nRegular exercise: Yes (hiking, cooking as active lifestyle)\n\nSigned: María García López\nDate: 15/01/2025"
+}

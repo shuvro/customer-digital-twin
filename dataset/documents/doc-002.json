@@ -1,0 +1,8 @@
+{
+  "id": "doc-002",
+  "source": "document",
+  "messageDate": "2025-03-01T00:00:00Z",
+  "documentType": "registration_form",
+  "title": "Customer Registration Form",
+  "body": "CUSTOMER REGISTRATION FORM\n\nDate: 01 March 2025\n\nPERSONAL DATA\n-------------\nSurname: Weber\nFirst Name: Thomas\nDate of Birth: 22.07.1978\nPlace of Birth: Hamburg\nGender: Male\nNationality: German\nTax ID (Steuer-ID): 65 432 187 909\n\nCURRENT ADDRESS\n---------------\nStreet: Friedrichstraße 42\nPostal Code: 10117\nCity: Berlin\nCountry: Germany\n\nCONTACT INFORMATION\n-------------------\nPhone: +49 30 9876543\nMobile: —\nEmail: t.weber@business.de\n\nOCCUPATION\n----------\nProfession: Accountant\nEmployer: Self-employed (Freelance)\nMonthly Net Income: €4,200\n\nMARITAL STATUS\n--------------\nStatus: Divorced\nChildren: 1 (Son, age 11)\n\nSigned: Thomas Weber\nDate: 01.03.2025"
+}
