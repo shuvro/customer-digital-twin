@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.env
+.env.*
+*.md
+tests
+coverage
+.DS_Store
+.vscode
+.idea
+.cursor
+dataset
+scripts

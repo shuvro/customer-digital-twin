@@ -1,20 +1,32 @@
 # Dependencies
 node_modules/
-vendor/
-__pycache__/
-*.pyc
-.venv/
-venv/
 
-# Build
+# Build output
 dist/
 build/
-*.egg-info/
+*.tsbuildinfo
 
-# Environment
+# Environment variables
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# Test coverage
+coverage/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # IDE
 .idea/
@@ -22,15 +34,27 @@ build/
 *.swp
 *.swo
 *~
+*.sublime-workspace
+*.sublime-project
 
 # OS
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 
 # Docker
 docker-compose.override.yml
 
-# Logs
-*.log
-logs/
+# Dataset evaluation output
 dataset/expected-output.json
+
+# Misc
+*.tgz
+.cache/
+tmp/
+temp/
+
+.idea
+.vscode
+.cursor

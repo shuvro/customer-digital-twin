@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MessageStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Message {
+  id               String        @id
+  source           String
+  messageDate      DateTime
+  rawPayload       Json
+  status           MessageStatus @default(PENDING)
+  errorMessage     String?
+  processedAt      DateTime?
+  customerId       String?
+  extractionResult Json?
+  confidence       Float?
+  matchScore       Float?
+  matchSignals     Json?
+  createdAt        DateTime      @default(now())
+
+  customer           Customer?           @relation(fields: [customerId], references: [id])
+  sourcedIdentities  CustomerIdentity[]
+  sourcedAttributes  CustomerAttribute[]
+  sourcedInsights    CustomerInsight[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([messageDate])
+}
+
+model Customer {
+  id                String    @id @default(cuid())
+  firstName         String?
+  lastName          String?
+  dateOfBirth       DateTime?
+  nationality       String?
+  gender            String?
+  taxId             String?
+  identityConflicts Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  messages   Message[]
+  identities CustomerIdentity[]
+  attributes CustomerAttribute[]
+  insights   CustomerInsight[]
+
+  @@index([taxId])
+  @@index([firstName, lastName])
+  @@index([dateOfBirth])
+}
+
+model CustomerIdentity {
+  id              String   @id @default(cuid())
+  customerId      String
+  field           String
+  value           String
+  confidence      Float    @default(1.0)
+  sourceMessageId String
+  messageDate     DateTime
+  createdAt       DateTime @default(now())
+
+  customer      Customer @relation(fields: [customerId], references: [id])
+  sourceMessage Message  @relation(fields: [sourceMessageId], references: [id])
+
+  @@unique([customerId, field])
+  @@index([customerId])
+}
+
+model CustomerAttribute {
+  id              String   @id @default(cuid())
+  customerId      String
+  field           String
+  value           String   @db.Text
+  valueJson       Json?
+  isCurrent       Boolean  @default(false)
+  confidence      Float    @default(1.0)
+  sourceMessageId String
+  messageDate     DateTime
+  createdAt       DateTime @default(now())
+
+  customer      Customer @relation(fields: [customerId], references: [id])
+  sourceMessage Message  @relation(fields: [sourceMessageId], references: [id])
+
+  @@unique([customerId, field, sourceMessageId, messageDate, value])
+  @@index([customerId, field, isCurrent])
+  @@index([customerId, field, messageDate])
+}
+
+model CustomerInsight {
+  id              String   @id @default(cuid())
+  customerId      String
+  field           String
+  value           String   @db.Text
+  confidence      Float    @default(0.7)
+  sourceMessageId String
+  messageDate     DateTime
+  createdAt       DateTime @default(now())
+
+  customer      Customer @relation(fields: [customerId], references: [id])
+  sourceMessage Message  @relation(fields: [sourceMessageId], references: [id])
+
+  @@unique([customerId, field, value, sourceMessageId])
+  @@index([customerId, field])
+}

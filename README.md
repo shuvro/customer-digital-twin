@@ -1,311 +1,214 @@
-# Technical Test — Context Engineering: Customer Digital Twin
+# Customer Digital Twin
 
-## Overview
+An AI-powered pipeline that ingests unstructured data (emails, chat messages, documents), extracts customer information via LLM, and maintains living customer profiles with full history tracking.
 
-Your mission is to build a **Customer Digital Twin** service — an intelligent pipeline that ingests unstructured data from multiple sources (emails, chat messages, and documents), extracts customer information, and maintains a living, up-to-date customer profile.
+## Architecture
 
-This test evaluates your ability to design and implement a **context engineering** solution: building the right data model, orchestrating an AI-powered extraction pipeline, and handling the inherent ambiguity of real-world unstructured data.
+```
+POST /api/messages
+        │
+        ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Extract    │────▶│    Search    │────▶│    Decide    │────▶│   Persist    │
+│  (LLM call)  │     │(fuzzy match) │     │(create/update)│    │ (3-layer DB) │
+└──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
+```
 
----
+**Four-stage pipeline:**
 
-## The Problem
+1. **Extract** — LLM parses unstructured text into structured fields (name, DOB, tax ID, emails, phones, addresses, hobbies, etc.)
+2. **Search** — Fuzzy-matches extracted data against existing customers using Jaro-Winkler similarity + composite weighted scoring (taxId, email, phone, name, DOB)
+3. **Decide** — Determines whether to CREATE a new customer or UPDATE an existing one based on match score thresholds
+4. **Persist** — Writes data into a three-layer model inside a Prisma transaction
 
-An insurance company receives customer data through various unstructured channels:
+### Three-Layer Data Model
 
-- **Emails** — correspondence between agents and customers
-- **Messages** — chat or SMS conversations
-- **Documents** — scanned forms, policy documents, claim reports
+| Layer | Fields | Behavior |
+|---|---|---|
+| **Immutable** | firstName, lastName, dateOfBirth, nationality, gender, taxId | Set once, never overwritten. Conflicts are logged for audit. |
+| **Mutable** | emails, phones, addresses, maritalStatus, occupation, employer | Latest `messageDate` wins for scalars. List fields (email, phone, address) accumulate all distinct values. Full history preserved. |
+| **Inferred** | hobbies, needs, riskIndicators, communicationPreferences, familyContext, notes | Accumulated across messages. Never overwritten or deleted. |
 
-Each message may contain fragments of customer information scattered across free-form text. Your system must:
+### Design Decisions
 
-1. **Extract** structured customer data from each unstructured entry
-2. **Identify** which customer the data belongs to (search/match)
-3. **Decide** whether to **create** a new customer profile or **update** an existing one
-4. **Maintain** a rich, layered customer profile as a digital twin
+- **No format-specific parsing** — The pipeline is fully format-agnostic. The LLM handles all extraction from any text format.
+- **Session-level advisory locks** (`pg_advisory_lock`) held inside a single `$transaction` callback for safe idempotency. The lock spans the entire pipeline (extract through persist), ensuring no duplicate processing even under concurrent requests. Lock and unlock use the same pooled connection.
+- **`messageDate`-based conflict resolution** — Scalar mutable fields (maritalStatus, occupation, employer): the value from the most recent `messageDate` wins, with one current value at a time. Non-chronological message arrival is handled correctly.
+- **List field accumulation** — Contact fields (email, phone, address) accumulate all distinct values as "current". In an insurance context, a customer's second email doesn't invalidate the first — all known contact points are preserved. Each distinct value's latest entry (by `messageDate`) is the canonical one, with full history retained.
+- **Custom LLM pipeline** — OpenAI SDK with retry + model fallback (primary: `gpt-oss-120b`, fallback: `Kimi-K2.5`), no framework dependencies.
 
----
+## Tech Stack
 
-## Customer Profile Data Model
+- **Runtime**: TypeScript + Node.js
+- **HTTP**: Fastify (JSON Schema validation with ajv-formats)
+- **Database**: PostgreSQL 16
+- **ORM**: Prisma
+- **LLM**: OpenAI SDK pointing to Nebius AI Platform
+- **Testing**: Vitest
+- **Infrastructure**: Docker + Docker Compose
 
-The customer profile must be organized into three categories of data:
+## Setup
 
-### 1. Deterministic (Immutable) Data
-Data that is factual and does not change over a customer's lifetime:
+### Prerequisites
 
-| Field | Example |
-|---|---|
-| `firstName` | Maria |
-| `lastName` | García López |
-| `dateOfBirth` | 1985-03-14 |
-| `nationality` | Spanish |
-| `gender` | Female |
-| `taxId` | 12345678A |
+- Docker and Docker Compose
+- `NEBIUS_API_KEY` environment variable
 
-### 2. Deterministic (Mutable) Data
-Data that is factual but can change over time. The system must keep history and always surface the most recent value:
+### Quick Start
 
-| Field | Example |
-|---|---|
-| `addresses` | List of addresses with timestamps |
-| `emails` | List of email addresses with timestamps |
-| `phones` | List of phone numbers with timestamps |
-| `maritalStatus` | Married (as of 2024-06-15) |
-| `occupation` | Software Engineer (as of 2025-01-10) |
-| `employer` | TechCorp GmbH (as of 2025-01-10) |
+```bash
+# Set your API key
+export NEBIUS_API_KEY=your-key-here
 
-### 3. Non-Deterministic (Inferred) Data
-Data that is inferred from context, may be subjective, and accumulates over time:
+# Start everything (app + database)
+docker compose up --build
 
-| Field | Example |
-|---|---|
-| `communicationPreferences` | Prefers email over phone |
-| `hobbies` | Hiking, reading, cooking |
-| `needs` | Looking for life insurance, interested in retirement planning |
-| `riskIndicators` | Smoker, drives motorcycle |
-| `familyContext` | Has two children, lives with spouse |
-| `notes` | Mentioned recent job change, expressed urgency about health coverage |
+# In another terminal, ingest the 15 sample messages
+make ingest
+```
 
----
+The service starts on `http://localhost:3000`. Health check: `GET /health`.
 
-## Requirements
+### Local Development
 
-### 1. Message Ingestion API
+```bash
+make install          # npm ci
+make db-up            # start PostgreSQL only
+make db-migrate       # apply Prisma migrations
+make dev              # hot-reload dev server (tsx watch)
+make test             # run all tests
+make verify           # typecheck + tests + build
+```
 
-Build a REST API with **at minimum** these two endpoints:
+## API Documentation
 
-#### `POST /api/messages`
-Accepts a single unstructured message for processing.
+### POST /api/messages
+
+Ingest a single unstructured message.
+
+**Request:**
 
 ```json
 {
   "id": "msg-001",
   "source": "email",
-  "messageDate": "2025-06-15T10:30:00Z",
-  "subject": "Re: Policy Inquiry",
-  "from": "maria.garcia@email.com",
-  "to": "agent@insurance.com",
-  "body": "Dear Agent, my name is Maria García López. I was born on March 14, 1985..."
+  "messageDate": "2025-01-15T10:30:00Z",
+  "body": "My name is María García López. Tax ID: 12345678A..."
 }
 ```
 
-The pipeline must be **agnostic to message content and format** — it should handle emails, messages, and documents through the same extraction flow without hardcoded format-specific logic.
+**Response (200):**
 
-#### `GET /api/customers`
-Returns all customer profiles with their most up-to-date data.
-
-#### `GET /api/customers/:id`
-Returns a single customer profile with full detail, including data history.
-
-### 2. AI-Powered Extraction Pipeline
-
-Design an **agent or workflow** that processes each incoming message through these stages:
-
-1. **Extract** — Use an LLM to extract structured customer data from the unstructured text
-2. **Search** — Find potential matching customers in the existing database
-3. **Decide** — Determine whether to create a new customer or update an existing one
-4. **Persist** — Save the extracted data with proper timestamps and source tracking
-
-### 3. Conflict Resolution Rules
-
-- When the **same field** appears in multiple messages, the value from the message with the **latest `messageDate`** wins
-- All historical values must be preserved (not overwritten) for audit purposes
-- Non-deterministic data **accumulates** — new inferences are added, not replaced
-- Source attribution must be maintained (which message contributed which data point)
-
-### 4. Security & Reliability
-
-- **Idempotency**: Ingesting the same message twice (same `id`) must not create duplicates or corrupt the customer profile
-- **Input validation**: The API must validate incoming payloads and reject malformed messages with appropriate error codes
-- **Error resilience**: If the LLM extraction fails for a single message (e.g. timeout, rate limit, unintelligible content), the system must handle it gracefully — log the failure, return a meaningful error, and not leave the database in an inconsistent state
-- **No data leakage**: Customer PII must not be exposed in logs or error responses. Be mindful of what gets logged when using LLM APIs
-- **API key management**: LLM API keys and any other secrets must be configured via environment variables, never hardcoded in source code
-
-### 5. Infrastructure
-
-- The entire service must run via **Docker / Docker Compose**
-- Include a `docker-compose.yml` that starts all required services
-- The service should be fully functional with a single `docker compose up`
-- Use any database of your choice (PostgreSQL, MongoDB, SQLite, etc.)
-
----
-
-## Dataset
-
-A sample dataset is provided in the `dataset/` directory containing **15 messages** across three types (emails, messages, documents) for **two fictional customers**:
-
-- **Customer A** — Maria García López
-- **Customer B** — Thomas Weber
-
-The messages arrive in **non-chronological order** and contain overlapping, sometimes conflicting data. Your system must correctly reconcile all data points based on `messageDate`.
-
-### Dataset Files
-
-```
-dataset/
-├── emails/
-│   ├── email-001.json
-│   ├── email-002.json
-│   ├── email-003.json
-│   ├── email-004.json
-│   └── email-005.json
-├── messages/
-│   ├── msg-001.json
-│   ├── msg-002.json
-│   ├── msg-003.json
-│   ├── msg-004.json
-│   └── msg-005.json
-└── documents/
-    ├── doc-001.json
-    ├── doc-002.json
-    ├── doc-003.json
-    ├── doc-004.json
-    └── doc-005.json
+```json
+{
+  "status": "ok",
+  "messageId": "msg-001",
+  "customerId": "cm5abc123",
+  "action": "CREATE",
+  "matchScore": 0,
+  "matchSignals": []
+}
 ```
 
----
+**Action values:** `CREATE` (new customer), `UPDATE` (matched existing), `SKIP` (no person extracted), `ALREADY_PROCESSED` (idempotent replay), `ALREADY_PROCESSING` (concurrent request is handling this message).
 
-## How We Evaluate
+**Validation errors (400):** Returned for missing required fields or invalid `messageDate` format (must be ISO 8601).
 
-> **Important — read this carefully.**
+### POST /api/messages/batch
 
-During evaluation, we will test your service by sending messages to your API **one by one** through the `POST /api/messages` endpoint. You should be aware of the following:
+Ingest multiple messages in one request.
 
-1. **Messages will NOT be sent in chronological order.** The ingestion order will be randomized. Your system must produce the correct customer profiles regardless of the order in which messages arrive.
+**Request:**
 
-2. **We will send 10 additional messages that are NOT included in the provided dataset.** These extra messages will contain new data, updates, and potentially new customers. Their content, format, and structure will not be disclosed in advance. Your pipeline must be robust and generic enough to handle **any** message — not just the 15 samples you have been given.
-
-3. **The expected outcome is the same:** after all messages are processed (the 15 from the dataset + the 10 unknown ones), the `GET /api/customers` endpoint must return correct, up-to-date customer profiles with proper conflict resolution and full history.
-
-**In short: do not hardcode anything. Do not tailor your extraction logic to the specific messages in the dataset. Build a system that works for any unstructured input.**
-
----
-
-## Evaluation Criteria
-
-### Context Engineering (40%)
-- Quality of the AI extraction prompt(s) and pipeline design
-- How well the system handles ambiguity and conflicting data
-- Agent/workflow architecture and decision-making logic
-- Source tracking and data lineage
-
-### Data Model Design (20%)
-- Separation of deterministic, mutable, and non-deterministic data
-- History preservation and temporal resolution
-- Schema design and extensibility
-
-### Code Quality (20%)
-- Clean, readable, well-structured code
-- Error handling and edge cases
-- Proper use of types/interfaces
-- Test coverage (unit and/or integration)
-
-### Infrastructure & DevEx (10%)
-- Docker setup that works out of the box
-- Clear documentation and setup instructions
-- API design and usability
-
-### Bonus Points (10%)
-- Confidence scoring on extracted data
-- Customer merge/deduplication strategy
-- Observability (logging, tracing)
-- Batch ingestion endpoint
-- Dashboard or UI for viewing customer profiles
-
----
-
-## LLM Access — Nebius AI Platform
-
-We provide an API key for the **Nebius AI Platform**, giving you access to two models via an OpenAI-compatible API. You will receive the key separately — configure it as the `NEBIUS_API_KEY` environment variable.
-
-### Available Models
-
-| Model | Identifier | Base URL |
-|---|---|---|
-| **GPT-OSS-120B** | `openai/gpt-oss-120b` | `https://api.tokenfactory.nebius.com/v1/` |
-| **Kimi-K2.5** | `moonshotai/Kimi-K2.5` | `https://api.tokenfactory.eu-west1.nebius.com/v1/` |
-
-You are free to use either or both models. Since the API is OpenAI-compatible, you can use the standard OpenAI SDK:
-
-#### GPT-OSS-120B
-
-```javascript
-const OpenAI = require('openai');
-
-const client = new OpenAI({
-    baseURL: 'https://api.tokenfactory.nebius.com/v1/',
-    apiKey: process.env.NEBIUS_API_KEY,
-});
-
-const response = await client.chat.completions.create({
-    model: "openai/gpt-oss-120b",
-    messages: [
-        { role: "system", content: "SYSTEM_PROMPT" },
-        { role: "user", content: "USER_MESSAGE" }
-    ]
-});
+```json
+{
+  "messages": [
+    { "id": "msg-001", "source": "email", "messageDate": "2025-01-15T10:30:00Z", "body": "..." },
+    { "id": "msg-002", "source": "chat", "messageDate": "2025-02-01T14:00:00Z", "body": "..." }
+  ]
+}
 ```
 
-#### Kimi-K2.5
+**Response (200):**
 
-```javascript
-const OpenAI = require('openai');
-
-const client = new OpenAI({
-    baseURL: 'https://api.tokenfactory.eu-west1.nebius.com/v1/',
-    apiKey: process.env.NEBIUS_API_KEY,
-});
-
-const response = await client.chat.completions.create({
-    model: "moonshotai/Kimi-K2.5",
-    messages: [
-        { role: "system", content: "SYSTEM_PROMPT" },
-        { role: "user", content: "USER_MESSAGE" }
-    ]
-});
+```json
+{
+  "results": [
+    { "status": "ok", "messageId": "msg-001", "customerId": "cm5abc123", "action": "CREATE", "matchScore": 0, "matchSignals": [] },
+    { "status": "ok", "messageId": "msg-002", "customerId": "cm5abc123", "action": "UPDATE", "matchScore": 1.0, "matchSignals": ["taxId"] }
+  ]
+}
 ```
 
-> **Note:** You must use the Nebius-provided models for this test. Do not use other LLM providers (OpenAI, Anthropic, etc.) as we will evaluate your solution using the provided API key.
+### GET /api/customers
 
----
+List all customer profiles with current attribute values.
 
-## Tech Stack
+**Response (200):**
 
-You are free to choose your preferred technology stack. Here are some suggestions:
+```json
+{
+  "customers": [
+    {
+      "id": "cm5abc123",
+      "firstName": "María",
+      "lastName": "García López",
+      "dateOfBirth": "1985-03-14",
+      "nationality": "Spanish",
+      "gender": "Female",
+      "taxId": "12345678A",
+      "currentAttributes": {
+        "email": ["m.garcia85@gmail.com", "maria.garcia@email.com"],
+        "phone": ["+34 612 345 678", "+49 171 2345678"],
+        "address": ["{\"city\":\"Munich\",\"country\":\"Germany\",...}"],
+        "maritalStatus": "Married",
+        "occupation": "Senior Software Engineer",
+        "employer": "TechCorp GmbH"
+      },
+      "insights": {
+        "hobbies": ["hiking", "cooking"],
+        "needs": ["life insurance"],
+        "familyContext": ["has stepchildren"]
+      },
+      "messageCount": 8
+    }
+  ]
+}
+```
 
-- **Language**: TypeScript
-- **LLM**: Nebius AI Platform (see above — OpenAI-compatible SDK)
-- **Database**: PostgreSQL, MongoDB, SQLite
-- **Agent Framework**: LangChain, LangGraph, CrewAI, custom implementation
+### GET /api/customers/:id
 
----
+Full customer detail with complete attribute history and linked messages.
 
-## Deliverables
+### GET /health
 
-1. **Source code** in a Git repository
-2. **Working Docker setup** (`docker compose up` must start the service)
-3. **README** with:
-   - Architecture overview and design decisions
-   - Setup instructions
-   - API documentation
-   - Example requests/responses
-4. **Processed results**: After ingesting all 15 messages, the two customer profiles should be correctly reconstructed
+Returns `{ "status": "ok" }`.
 
----
+## Testing
 
-## Getting Started
+```bash
+make test              # all tests
+make test-unit         # unit tests only
+make test-integration  # integration tests (requires PostgreSQL)
+make test-e2e          # end-to-end dataset test
+make test-coverage     # with coverage report
+```
 
-1. Clone this repository (NOT FORK)
-2. Review the dataset in `dataset/`
-3. Design your data model and extraction pipeline
-4. Implement the service
-5. Test by ingesting all messages and verifying the customer profiles
-6. Dockerize everything
-7. Document your decisions
+Tests use mocked LLM responses to be deterministic and fast. Integration and E2E tests require a running PostgreSQL (via `make db-up`).
 
----
+## Project Structure
 
-## Time Expectation
-
-This test is designed to be completed in **4–6 hours**. Delivered after 48 Hours. Focus on the core pipeline and data model first, then add refinements, improvements or nice to have.
-
-Good luck! We look forward to seeing your approach to context engineering.
+```
+src/
+  pipeline/          # 4-stage extraction pipeline (extract, search, decide, persist)
+  llm/               # OpenAI SDK client, prompts, JSON parser, retry logic
+  matching/          # Jaro-Winkler fuzzy matching + composite scorer
+  routes/            # Fastify route handlers (messages, customers, health)
+  services/          # Customer profile assembly
+  schemas/           # Input validation (Fastify JSON Schema + Zod for LLM output)
+  types/             # TypeScript interfaces
+  utils/             # Normalization + PII redaction
+prisma/              # Database schema + migrations
+dataset/             # 15 sample messages (5 emails, 5 messages, 5 documents)
+tests/               # Unit, integration, and E2E tests
+```
