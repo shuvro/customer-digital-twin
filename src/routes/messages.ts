@@ -4,6 +4,8 @@ import { getPipelineSchema } from '../schemas/pipeline.schema.js';
 import { processMessage } from '../pipeline/index.js';
 import { prisma } from '../db.js';
 import type { InboundMessage } from '../types/message.js';
+import { logger } from '../logger.js';
+import { toErrorMessage } from '../utils/errors.js';
 
 export async function messageRoutes(app: FastifyInstance): Promise<void> {
   app.post('/messages', { schema: postMessageSchema }, async (request, reply) => {
@@ -37,7 +39,8 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
           matchScore: result.score,
           matchSignals: result.signals,
         });
-      } catch (_err) {
+      } catch (err) {
+        logger.warn({ messageId: message.id, error: toErrorMessage(err) }, 'Batch message processing failed');
         results.push({
           status: 'error',
           messageId: message.id,

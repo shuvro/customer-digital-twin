@@ -80,7 +80,10 @@ export async function mergeCustomers(sourceCustomerId: string, targetCustomerId:
 
     // Store merge identity conflicts on target
     if (identityConflicts.length > 0) {
-      const existing = (target.identityConflicts as Array<Record<string, string>>) || [];
+      const rawConflicts = target.identityConflicts;
+      const existing = Array.isArray(rawConflicts)
+        ? (rawConflicts as Array<Record<string, string>>)
+        : [];
       const newConflicts = identityConflicts.map((c) => ({
         ...c,
         type: 'merge',

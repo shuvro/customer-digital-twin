@@ -15,7 +15,7 @@ export async function searchCustomers(ctx: PipelineContext): Promise<SearchResul
     return { candidates: [], bestMatch: null };
   }
 
-  const candidates = await findMatchCandidates(person!);
+  const candidates = await findMatchCandidates(person);
 
   logger.info({
     messageId: ctx.message.id,

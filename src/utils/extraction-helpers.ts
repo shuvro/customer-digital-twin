@@ -25,7 +25,7 @@ export function extractScalarField(
  * Returns true if the extracted person has at least one identifying field
  * that could be used for customer matching (name, taxId, contact, DOB).
  */
-export function hasIdentifyingInfo(person: ExtractedPerson | undefined | null): boolean {
+export function hasIdentifyingInfo(person: ExtractedPerson | undefined | null): person is ExtractedPerson {
   if (!person) return false;
 
   return !!(
