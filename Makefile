@@ -1,6 +1,6 @@
 .PHONY: help install dev build start clean test test-unit test-integration test-e2e test-watch test-coverage \
         db-up db-down db-migrate db-migrate-deploy db-generate db-studio db-reset \
-        docker-up docker-down docker-build docker-logs docker-restart docker-up-detached \
+        docker-up docker-down docker-nuke docker-build docker-logs docker-restart docker-up-detached \
         ingest ingest-unknown generate-unknown lint typecheck verify
 
 # ─── Help ────────────────────────────────────────────────────────────
@@ -84,6 +84,9 @@ docker-up-detached: ## Start all services in background
 
 docker-down: ## Stop all services
 	docker compose down
+
+docker-nuke: ## Full teardown: stop all services, remove volumes and images
+	docker compose down -v --rmi local --remove-orphans
 
 docker-build: ## Build Docker image without starting
 	docker compose build

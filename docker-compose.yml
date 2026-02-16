@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -26,6 +26,8 @@ services:
       HOST: "0.0.0.0"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
+    volumes:
+      - ./dataset:/app/dataset:ro
     depends_on:
       db:
         condition: service_healthy

@@ -237,21 +237,13 @@ async function upsertAttribute(
   await recalculateCurrent(tx, customerId, field);
 }
 
-// List-type fields can have multiple concurrent "current" values.
+// SPEC rule: "When the same field appears in multiple messages, the value from
+// the message with the latest messageDate wins." All historical values are
+// preserved for audit, but only the latest value is marked isCurrent=true.
 //
-// DESIGN DECISION: For an insurance company, contact information accumulates —
-// a customer's second email doesn't invalidate the first. All distinct values
-// ever seen are kept as "current" (the latest entry per value is the canonical one).
-// This ensures no reachable contact point is ever lost.
-//
-// Alternative interpretation: "latest messageDate wins" could mean only values
-// from the most recent message are current. We chose accumulation because:
-//   1. Insurance requires maximum customer reachability
-//   2. A message mentioning one email doesn't imply others are invalid
-//   3. Full history is preserved regardless, so switching behavior is trivial
-//
-// Scalar mutable fields (maritalStatus, occupation, employer) follow strict
-// "latest messageDate wins" — only one value is current at a time.
+// For all mutable fields (scalar and list alike), the entry with the most
+// recent messageDate is the single "current" value. Older values remain in
+// the database as history but with isCurrent=false.
 export const LIST_FIELDS = new Set(['email', 'phone', 'address']);
 
 export async function recalculateCurrent(
@@ -270,47 +262,18 @@ export async function recalculateCurrent(
 
   if (allEntries.length === 0) return;
 
-  if (LIST_FIELDS.has(field)) {
-    // For list fields: each distinct value from the latest message that mentions it is current.
-    // All unique values ever seen are kept current (accumulated over time).
-    // We mark all entries as current since each represents a distinct value
-    // (uniqueness is enforced by the DB constraint on customerId+field+sourceMessageId+messageDate+value).
-    const currentIds = new Set<string>();
-    const seenValues = new Set<string>();
-    for (const entry of allEntries) {
-      if (!seenValues.has(entry.value)) {
-        seenValues.add(entry.value);
-        currentIds.add(entry.id);
-      }
-    }
+  // The first entry (latest messageDate) is the current value
+  const currentId = allEntries[0].id;
 
-    // Set all to not current first
-    await tx.customerAttribute.updateMany({
-      where: { customerId, field, isCurrent: true },
-      data: { isCurrent: false },
-    });
+  await tx.customerAttribute.updateMany({
+    where: { customerId, field, isCurrent: true },
+    data: { isCurrent: false },
+  });
 
-    // Mark the latest entry for each distinct value as current
-    if (currentIds.size > 0) {
-      await tx.customerAttribute.updateMany({
-        where: { id: { in: [...currentIds] } },
-        data: { isCurrent: true },
-      });
-    }
-  } else {
-    // For scalar fields: only the latest value is current
-    const currentId = allEntries[0].id;
-
-    await tx.customerAttribute.updateMany({
-      where: { customerId, field, isCurrent: true },
-      data: { isCurrent: false },
-    });
-
-    await tx.customerAttribute.update({
-      where: { id: currentId },
-      data: { isCurrent: true },
-    });
-  }
+  await tx.customerAttribute.update({
+    where: { id: currentId },
+    data: { isCurrent: true },
+  });
 }
 
 async function persistInsights(

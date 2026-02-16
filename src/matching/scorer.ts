@@ -131,6 +131,42 @@ export async function findMatchCandidates(person: ExtractedPerson): Promise<Matc
 
   if (customers.length === 0) return [];
 
+  // Direct lookup phase: find customers that share an exact phone/email with the extracted person
+  const directHitIds = new Set<string>();
+  const contactAttrs = await prisma.customerAttribute.findMany({
+    where: { isCurrent: true, field: { in: ['email', 'phone'] } },
+    select: { customerId: true, field: true, value: true },
+  });
+
+  // Build normalized lookup: value → customerId
+  const contactMap = new Map<string, string>();
+  for (const attr of contactAttrs) {
+    const normalized = attr.field === 'email'
+      ? normalizeEmail(attr.value)
+      : normalizePhone(attr.value);
+    contactMap.set(`${attr.field}:${normalized}`, attr.customerId);
+  }
+
+  // Check extracted person's emails/phones against the map
+  if (person.emails) {
+    for (const email of person.emails) {
+      const key = `email:${normalizeEmail(email)}`;
+      const hit = contactMap.get(key);
+      if (hit) directHitIds.add(hit);
+    }
+  }
+  if (person.phones) {
+    for (const phone of person.phones) {
+      const key = `phone:${normalizePhone(phone)}`;
+      const hit = contactMap.get(key);
+      if (hit) directHitIds.add(hit);
+    }
+  }
+
+  if (directHitIds.size > 0) {
+    logger.info({ directHitCount: directHitIds.size }, 'Direct phone/email lookup hits');
+  }
+
   const candidates: MatchCandidate[] = [];
 
   for (const customer of customers) {
@@ -146,6 +182,14 @@ export async function findMatchCandidates(person: ExtractedPerson): Promise<Matc
     };
 
     const candidate = scoreCandidate(person, customerForScoring);
+
+    // Boost direct lookup hits to ensure they clear the highThreshold
+    if (directHitIds.has(customer.id) && candidate.score < 0.8) {
+      candidate.score = 0.8;
+      if (!candidate.signals.includes('direct_lookup')) {
+        candidate.signals.push('direct_lookup');
+      }
+    }
 
     if (candidate.score > 0) {
       candidates.push(candidate);

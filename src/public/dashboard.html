@@ -128,6 +128,38 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* Ingest Panel */
+    .ingest-panel { border-bottom: 1px solid var(--border); }
+    .ingest-toggle { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); user-select: none; }
+    .ingest-toggle:hover { background: var(--surface2); }
+    .ingest-toggle .arrow { transition: transform 0.2s; font-size: 10px; }
+    .ingest-toggle .arrow.open { transform: rotate(90deg); }
+    .ingest-body { display: none; padding: 12px; }
+    .ingest-body.open { display: block; }
+    .ingest-tabs { display: flex; gap: 0; margin-bottom: 10px; }
+    .ingest-tab { flex: 1; padding: 6px 0; text-align: center; font-size: 11px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all 0.15s; }
+    .ingest-tab:hover { color: var(--text); }
+    .ingest-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .ingest-section { display: none; }
+    .ingest-section.active { display: block; }
+    .ingest-field { margin-bottom: 8px; }
+    .ingest-field label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .ingest-field input, .ingest-field select, .ingest-field textarea {
+      width: 100%; padding: 6px 10px; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); font-size: 12px; font-family: var(--font); outline: none;
+    }
+    .ingest-field input:focus, .ingest-field select:focus, .ingest-field textarea:focus { border-color: var(--accent); }
+    .ingest-field textarea { resize: vertical; min-height: 60px; font-family: var(--mono); font-size: 11px; }
+    .ingest-actions { display: flex; gap: 6px; margin-top: 10px; }
+    .ingest-result { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius); font-size: 12px; font-family: var(--mono); max-height: 150px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+    .ingest-result.success { background: #1a3328; border: 1px solid var(--accent2); color: var(--accent2); }
+    .ingest-result.error { background: #3d1f1f; border: 1px solid var(--danger); color: var(--danger); }
+    .ingest-result.info { background: #1a2433; border: 1px solid var(--accent); color: var(--accent); }
+    .ingest-progress { margin-top: 8px; }
+    .ingest-progress-bar { height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
+    .ingest-progress-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+    .ingest-progress-text { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -152,6 +184,86 @@
       <div class="search-box">
         <input type="text" id="searchInput" placeholder="Search customers..." oninput="filterCustomers()">
       </div>
+
+      <div class="ingest-panel">
+        <div class="ingest-toggle" onclick="toggleIngestPanel()">
+          <span>+ Ingest Message</span>
+          <span class="arrow" id="ingestArrow">&#9654;</span>
+        </div>
+        <div class="ingest-body" id="ingestBody">
+          <div class="ingest-tabs">
+            <div class="ingest-tab active" onclick="switchIngestTab('form', this)">Form</div>
+            <div class="ingest-tab" onclick="switchIngestTab('json', this)">JSON</div>
+            <div class="ingest-tab" onclick="switchIngestTab('dataset', this)">Dataset</div>
+          </div>
+
+          <!-- Form Tab -->
+          <div class="ingest-section active" id="ingestForm">
+            <div class="ingest-field">
+              <label>Message ID</label>
+              <input type="text" id="fId" placeholder="e.g. email-001">
+            </div>
+            <div class="ingest-field">
+              <label>Source</label>
+              <select id="fSource">
+                <option value="email">email</option>
+                <option value="message">message</option>
+                <option value="document">document</option>
+              </select>
+            </div>
+            <div class="ingest-field">
+              <label>Message Date</label>
+              <input type="datetime-local" id="fDate">
+            </div>
+            <div class="ingest-field">
+              <label>Subject (optional)</label>
+              <input type="text" id="fSubject" placeholder="Subject line">
+            </div>
+            <div class="ingest-field">
+              <label>From (optional)</label>
+              <input type="text" id="fFrom" placeholder="sender@example.com">
+            </div>
+            <div class="ingest-field">
+              <label>To (optional)</label>
+              <input type="text" id="fTo" placeholder="recipient@example.com">
+            </div>
+            <div class="ingest-field">
+              <label>Body</label>
+              <textarea id="fBody" rows="4" placeholder="Message body text..."></textarea>
+            </div>
+            <div class="ingest-actions">
+              <button class="btn btn-primary" onclick="submitFormMessage()">Submit</button>
+            </div>
+            <div id="formResult"></div>
+          </div>
+
+          <!-- JSON Tab -->
+          <div class="ingest-section" id="ingestJson">
+            <div class="ingest-field">
+              <label>Paste JSON (single message or array)</label>
+              <textarea id="jsonInput" rows="6" placeholder='{"id":"...","source":"email","messageDate":"...","body":"..."}'></textarea>
+            </div>
+            <div class="ingest-actions">
+              <button class="btn btn-primary" onclick="submitJsonMessage()">Ingest</button>
+            </div>
+            <div id="jsonResult"></div>
+          </div>
+
+          <!-- Dataset Tab -->
+          <div class="ingest-section" id="ingestDataset">
+            <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Load all available dataset messages and ingest them via the pipeline.</p>
+            <div class="ingest-actions">
+              <button class="btn btn-primary" id="datasetBtn" onclick="loadDataset()">Load Dataset</button>
+            </div>
+            <div class="ingest-progress" id="datasetProgress" style="display:none;">
+              <div class="ingest-progress-bar"><div class="ingest-progress-fill" id="datasetFill" style="width:0"></div></div>
+              <div class="ingest-progress-text" id="datasetText">Preparing...</div>
+            </div>
+            <div id="datasetResult"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="customer-list" id="customerList"></div>
     </div>
 
@@ -465,6 +577,181 @@
 
     async function refresh() {
       await Promise.all([loadMetrics(), loadCustomers(), loadDuplicates()]);
+    }
+
+    // --- Ingest Panel ---
+    function toggleIngestPanel() {
+      const body = document.getElementById('ingestBody');
+      const arrow = document.getElementById('ingestArrow');
+      body.classList.toggle('open');
+      arrow.classList.toggle('open');
+    }
+
+    function switchIngestTab(tab, el) {
+      document.querySelectorAll('.ingest-tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      document.querySelectorAll('.ingest-section').forEach(s => s.classList.remove('active'));
+      document.getElementById({ form: 'ingestForm', json: 'ingestJson', dataset: 'ingestDataset' }[tab]).classList.add('active');
+    }
+
+    function showIngestResult(elId, text, type) {
+      const el = document.getElementById(elId);
+      el.innerHTML = `<div class="ingest-result ${type}">${esc(text)}</div>`;
+    }
+
+    async function submitFormMessage() {
+      const id = document.getElementById('fId').value.trim();
+      const source = document.getElementById('fSource').value;
+      const dateVal = document.getElementById('fDate').value;
+      const body = document.getElementById('fBody').value.trim();
+
+      if (!id || !body) {
+        showIngestResult('formResult', 'ID and Body are required.', 'error');
+        return;
+      }
+
+      const msg = {
+        id,
+        source,
+        messageDate: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
+        body,
+      };
+      const subject = document.getElementById('fSubject').value.trim();
+      const from = document.getElementById('fFrom').value.trim();
+      const to = document.getElementById('fTo').value.trim();
+      if (subject) msg.subject = subject;
+      if (from) msg.from = from;
+      if (to) msg.to = to;
+
+      try {
+        showIngestResult('formResult', 'Processing...', 'info');
+        const res = await fetch(API + '/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(msg),
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          showIngestResult('formResult',
+            `${data.action} — customer: ${data.customerId}\nmatch: ${data.matchScore != null ? (data.matchScore * 100).toFixed(0) + '%' : '—'}`,
+            'success');
+          refresh();
+        } else {
+          showIngestResult('formResult', data.message || JSON.stringify(data), 'error');
+        }
+      } catch (err) {
+        showIngestResult('formResult', 'Error: ' + err.message, 'error');
+      }
+    }
+
+    async function submitJsonMessage() {
+      const raw = document.getElementById('jsonInput').value.trim();
+      if (!raw) {
+        showIngestResult('jsonResult', 'Paste JSON first.', 'error');
+        return;
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        showIngestResult('jsonResult', 'Invalid JSON.', 'error');
+        return;
+      }
+
+      try {
+        showIngestResult('jsonResult', 'Processing...', 'info');
+        let res, data;
+        if (Array.isArray(parsed)) {
+          res = await fetch(API + '/messages/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: parsed }),
+          });
+          data = await res.json();
+          const lines = (data.results || []).map(r =>
+            r.status === 'ok'
+              ? `OK  ${r.messageId} → ${r.action} (${r.customerId})`
+              : `ERR ${r.messageId}: ${r.message || 'failed'}`
+          );
+          showIngestResult('jsonResult', lines.join('\n'), 'success');
+        } else {
+          res = await fetch(API + '/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed),
+          });
+          data = await res.json();
+          if (res.ok && data.status === 'ok') {
+            showIngestResult('jsonResult',
+              `${data.action} — customer: ${data.customerId}\nmatch: ${data.matchScore != null ? (data.matchScore * 100).toFixed(0) + '%' : '—'}`,
+              'success');
+          } else {
+            showIngestResult('jsonResult', data.message || JSON.stringify(data), 'error');
+          }
+        }
+        refresh();
+      } catch (err) {
+        showIngestResult('jsonResult', 'Error: ' + err.message, 'error');
+      }
+    }
+
+    async function loadDataset() {
+      const btn = document.getElementById('datasetBtn');
+      const progress = document.getElementById('datasetProgress');
+      const fill = document.getElementById('datasetFill');
+      const text = document.getElementById('datasetText');
+      const resultEl = document.getElementById('datasetResult');
+
+      btn.disabled = true;
+      btn.textContent = 'Loading...';
+      progress.style.display = 'block';
+      resultEl.innerHTML = '';
+
+      try {
+        text.textContent = 'Fetching dataset...';
+        const dsRes = await fetch('/dataset');
+        const dsData = await dsRes.json();
+        const messages = dsData.messages || [];
+
+        if (messages.length === 0) {
+          showIngestResult('datasetResult', 'No dataset messages found.', 'error');
+          btn.disabled = false;
+          btn.textContent = 'Load Dataset';
+          progress.style.display = 'none';
+          return;
+        }
+
+        const results = [];
+        for (let i = 0; i < messages.length; i++) {
+          text.textContent = `Ingesting ${i + 1}/${messages.length}...`;
+          fill.style.width = ((i + 1) / messages.length * 100).toFixed(0) + '%';
+
+          try {
+            const res = await fetch(API + '/messages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(messages[i]),
+            });
+            const data = await res.json();
+            results.push(data.status === 'ok'
+              ? `OK  ${messages[i].id} → ${data.action} (${data.customerId})`
+              : `ERR ${messages[i].id}: ${data.message || 'failed'}`);
+          } catch (err) {
+            results.push(`ERR ${messages[i].id}: ${err.message}`);
+          }
+        }
+
+        text.textContent = `Done — ${messages.length} messages processed`;
+        showIngestResult('datasetResult', results.join('\n'), 'success');
+        refresh();
+      } catch (err) {
+        showIngestResult('datasetResult', 'Error: ' + err.message, 'error');
+        text.textContent = 'Failed';
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Load Dataset';
     }
 
     // Init

@@ -31,7 +31,9 @@ export async function listCustomers(): Promise<CustomerSummary[]> {
     const insights: Record<string, string[]> = {};
     for (const insight of c.insights) {
       if (!insights[insight.field]) insights[insight.field] = [];
-      insights[insight.field].push(insight.value);
+      if (!insights[insight.field].includes(insight.value)) {
+        insights[insight.field].push(insight.value);
+      }
     }
 
     return {
@@ -100,7 +102,7 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | nu
     });
   }
 
-  // Group insights by field
+  // Group insights by field, deduplicated by value (latest source kept)
   const insights: Record<string, Array<{
     value: string;
     confidence: number;
@@ -110,12 +112,15 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | nu
 
   for (const insight of customer.insights) {
     if (!insights[insight.field]) insights[insight.field] = [];
-    insights[insight.field].push({
-      value: insight.value,
-      confidence: insight.confidence,
-      sourceMessageId: insight.sourceMessageId,
-      messageDate: insight.messageDate.toISOString(),
-    });
+    // Insights are ordered by messageDate desc — first occurrence of a value is the latest
+    if (!insights[insight.field].some(i => i.value === insight.value)) {
+      insights[insight.field].push({
+        value: insight.value,
+        confidence: insight.confidence,
+        sourceMessageId: insight.sourceMessageId,
+        messageDate: insight.messageDate.toISOString(),
+      });
+    }
   }
 
   return {
