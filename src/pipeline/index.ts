@@ -6,7 +6,7 @@ import { decideAction } from './decide.js';
 import { persistExtraction } from './persist.js';
 import type { InboundMessage } from '../types/message.js';
 import type { PipelineContext } from '../types/pipeline.js';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client.js';
 import { metrics } from '../observability/metrics.js';
 import { hashText } from '../utils/hash.js';
 import type { Logger } from 'pino';

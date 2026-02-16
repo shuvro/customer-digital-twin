@@ -2,9 +2,9 @@ import { logger } from '../logger.js';
 import { canonicalValue } from '../utils/normalize.js';
 import type { PipelineContext } from '../types/pipeline.js';
 import type { ExtractedPerson, ExtractedAddress, FieldConfidence } from '../types/extraction.js';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client.js';
 
-export type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
+export type TxClient = Prisma.TransactionClient;
 
 // Fields classified by data layer
 const IMMUTABLE_FIELDS = ['firstName', 'lastName', 'dateOfBirth', 'nationality', 'gender', 'taxId'] as const;

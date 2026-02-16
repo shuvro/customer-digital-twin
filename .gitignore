@@ -16,6 +16,7 @@ build/
 # Prisma
 prisma/*.db
 prisma/*.db-journal
+src/generated/
 
 # Test coverage
 coverage/

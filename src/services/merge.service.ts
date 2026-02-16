@@ -4,7 +4,7 @@ import { recalculateCurrent, type TxClient } from '../pipeline/persist.js';
 import { metrics } from '../observability/metrics.js';
 import { CustomerNotFoundError } from '../errors.js';
 import { hashText } from '../utils/hash.js';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client.js';
 
 export interface MergeResult {
   targetCustomerId: string;

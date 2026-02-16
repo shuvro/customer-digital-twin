@@ -6,7 +6,8 @@ COPY package.json package-lock.json* .npmrc* ./
 RUN npm ci
 
 COPY prisma ./prisma
-RUN npx prisma generate
+COPY prisma.config.ts ./
+RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" npx prisma generate
 
 COPY tsconfig.json ./
 COPY src ./src
@@ -22,7 +23,7 @@ COPY package.json package-lock.json* .npmrc* ./
 RUN npm ci --omit=dev
 
 COPY prisma ./prisma
-RUN npx prisma generate
+COPY prisma.config.ts ./
 
 COPY --from=builder /app/dist ./dist
 
