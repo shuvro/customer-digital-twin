@@ -208,4 +208,78 @@ describe('scoreCandidate', () => {
       expect(result.signals).toHaveLength(0);
     });
   });
+
+  describe('edge cases', () => {
+    it('empty person (all undefined) returns score 0', () => {
+      const result = scoreCandidate(
+        makePerson({ taxId: undefined, firstName: undefined, lastName: undefined, emails: [], phones: [], dateOfBirth: undefined }),
+        makeCustomer(),
+      );
+      expect(result.score).toBe(0);
+      expect(result.signals).toHaveLength(0);
+    });
+
+    it('empty customer (all null) returns score 0', () => {
+      const result = scoreCandidate(
+        makePerson(),
+        makeCustomer({ taxId: null, firstName: null, lastName: null, dateOfBirth: null, gender: null, emails: [], phones: [] }),
+      );
+      expect(result.score).toBe(0);
+      expect(result.signals).toHaveLength(0);
+    });
+
+    it('scoring is asymmetric — person drives field iteration', () => {
+      // Person has email, customer has name — scoring checks person's fields against customer
+      const personWithEmail = makePerson({ taxId: undefined, firstName: undefined, lastName: undefined, dateOfBirth: undefined, emails: ['shared@test.com'], phones: [] });
+      const customerWithEmail = makeCustomer({ taxId: null, emails: ['shared@test.com'] });
+
+      const result = scoreCandidate(personWithEmail, customerWithEmail);
+      expect(result.signals).toContain('email');
+
+      // Reverse: person has no email, customer has email — no match
+      const personNoEmail = makePerson({ taxId: undefined, firstName: undefined, lastName: undefined, dateOfBirth: undefined, emails: [], phones: [] });
+      const result2 = scoreCandidate(personNoEmail, customerWithEmail);
+      expect(result2.signals).not.toContain('email');
+      expect(result2.score).toBe(0);
+    });
+
+    it('only one email needs to match from multiple', () => {
+      const result = scoreCandidate(
+        makePerson({ taxId: undefined, firstName: undefined, lastName: undefined, dateOfBirth: undefined, emails: ['no-match@test.com', 'm.garcia85@gmail.com'], phones: [] }),
+        makeCustomer({ taxId: null }),
+      );
+      expect(result.signals).toContain('email');
+      expect(result.score).toBeCloseTo(0.6, 2);
+    });
+
+    it('name matching requires both firstName and lastName', () => {
+      // Person has only firstName
+      const result1 = scoreCandidate(
+        makePerson({ taxId: undefined, firstName: 'María', lastName: undefined, emails: [], phones: [], dateOfBirth: undefined }),
+        makeCustomer({ taxId: null }),
+      );
+      expect(result1.signals).not.toContain('name');
+
+      // Customer has only firstName
+      const result2 = scoreCandidate(
+        makePerson({ taxId: undefined, emails: [], phones: [], dateOfBirth: undefined }),
+        makeCustomer({ taxId: null, lastName: null }),
+      );
+      expect(result2.signals).not.toContain('name');
+    });
+
+    it('null taxId on either side skips taxId comparison', () => {
+      const result1 = scoreCandidate(
+        makePerson({ taxId: null, firstName: undefined, lastName: undefined, emails: [], phones: [], dateOfBirth: undefined }),
+        makeCustomer({ taxId: '12345678A' }),
+      );
+      expect(result1.taxIdMatch).toBe(false);
+
+      const result2 = scoreCandidate(
+        makePerson({ taxId: '12345678A', firstName: undefined, lastName: undefined, emails: [], phones: [], dateOfBirth: undefined }),
+        makeCustomer({ taxId: null }),
+      );
+      expect(result2.taxIdMatch).toBe(false);
+    });
+  });
 });

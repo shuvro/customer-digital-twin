@@ -1,7 +1,7 @@
 import { logger } from '../logger.js';
 import { canonicalValue } from '../utils/normalize.js';
 import type { PipelineContext } from '../types/pipeline.js';
-import type { ExtractedPerson, ExtractedAddress } from '../types/extraction.js';
+import type { ExtractedPerson, ExtractedAddress, FieldConfidence } from '../types/extraction.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
 
 export type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
@@ -16,11 +16,12 @@ const INFERRED_FIELDS = ['communicationPreferences', 'hobbies', 'needs', 'riskIn
  * Accepts a transaction client so it can participate in the caller's transaction.
  */
 export async function persistExtraction(ctx: PipelineContext, tx: TxClient): Promise<string> {
-  const { person, decision, message } = ctx;
+  const { person, decision, message, extraction } = ctx;
   if (!person || !decision) throw new Error('Missing person or decision in pipeline context');
 
   const messageDate = new Date(message.messageDate);
   const sourceMessageId = message.id;
+  const confidence = extraction?.confidence ?? {};
 
   let customerId: string;
 
@@ -41,16 +42,16 @@ export async function persistExtraction(ctx: PipelineContext, tx: TxClient): Pro
   });
 
   // Layer 1: Immutable identity fields
-  await persistImmutableFields(tx, customerId, person, sourceMessageId, messageDate);
+  await persistImmutableFields(tx, customerId, person, sourceMessageId, messageDate, confidence);
 
   // Layer 2: Mutable attributes (scalars)
-  await persistMutableScalars(tx, customerId, person, sourceMessageId, messageDate);
+  await persistMutableScalars(tx, customerId, person, sourceMessageId, messageDate, confidence);
 
   // Layer 2: Mutable attributes (arrays — emails, phones, addresses)
-  await persistMutableArrays(tx, customerId, person, sourceMessageId, messageDate);
+  await persistMutableArrays(tx, customerId, person, sourceMessageId, messageDate, confidence);
 
   // Layer 3: Inferred insights
-  await persistInsights(tx, customerId, person, sourceMessageId, messageDate);
+  await persistInsights(tx, customerId, person, sourceMessageId, messageDate, confidence);
 
   return customerId;
 }
@@ -61,6 +62,7 @@ async function persistImmutableFields(
   person: ExtractedPerson,
   sourceMessageId: string,
   messageDate: Date,
+  fieldConfidence: FieldConfidence,
 ): Promise<void> {
   for (const field of IMMUTABLE_FIELDS) {
     const raw = person[field];
@@ -68,6 +70,8 @@ async function persistImmutableFields(
 
     const value = field === 'dateOfBirth' ? String(raw) : canonicalValue(raw);
     if (!value) continue;
+
+    const conf = fieldConfidence[field] ?? 1.0;
 
     // Try to find existing identity for this field
     const existing = await tx.customerIdentity.findUnique({
@@ -77,7 +81,7 @@ async function persistImmutableFields(
     if (!existing) {
       // Create new identity entry
       await tx.customerIdentity.create({
-        data: { customerId, field, value, sourceMessageId, messageDate, confidence: 1.0 },
+        data: { customerId, field, value, sourceMessageId, messageDate, confidence: conf },
       });
 
       // Update denormalized field on Customer
@@ -123,6 +127,7 @@ async function persistMutableScalars(
   person: ExtractedPerson,
   sourceMessageId: string,
   messageDate: Date,
+  fieldConfidence: FieldConfidence,
 ): Promise<void> {
   for (const field of MUTABLE_SCALAR_FIELDS) {
     const raw = person[field];
@@ -131,7 +136,8 @@ async function persistMutableScalars(
     const value = canonicalValue(raw);
     if (!value) continue;
 
-    await upsertAttribute(tx, customerId, field, value, null, sourceMessageId, messageDate);
+    const conf = fieldConfidence[field] ?? 1.0;
+    await upsertAttribute(tx, customerId, field, value, null, sourceMessageId, messageDate, conf);
   }
 }
 
@@ -141,31 +147,35 @@ async function persistMutableArrays(
   person: ExtractedPerson,
   sourceMessageId: string,
   messageDate: Date,
+  fieldConfidence: FieldConfidence,
 ): Promise<void> {
   // Emails
   if (person.emails) {
+    const conf = fieldConfidence['emails'] ?? 1.0;
     for (const email of person.emails) {
       const value = canonicalValue(email);
       if (value) {
-        await upsertAttribute(tx, customerId, 'email', value, null, sourceMessageId, messageDate);
+        await upsertAttribute(tx, customerId, 'email', value, null, sourceMessageId, messageDate, conf);
       }
     }
   }
 
   // Phones
   if (person.phones) {
+    const conf = fieldConfidence['phones'] ?? 1.0;
     for (const phone of person.phones) {
       const value = canonicalValue(phone);
       if (value) {
-        await upsertAttribute(tx, customerId, 'phone', value, null, sourceMessageId, messageDate);
+        await upsertAttribute(tx, customerId, 'phone', value, null, sourceMessageId, messageDate, conf);
       }
     }
   }
 
   // Addresses
   if (person.addresses) {
+    const conf = fieldConfidence['addresses'] ?? 1.0;
     for (const addr of person.addresses) {
-      await persistAddress(tx, customerId, addr, sourceMessageId, messageDate);
+      await persistAddress(tx, customerId, addr, sourceMessageId, messageDate, conf);
     }
   }
 }
@@ -176,6 +186,7 @@ async function persistAddress(
   addr: ExtractedAddress,
   sourceMessageId: string,
   messageDate: Date,
+  confidence: number = 1.0,
 ): Promise<void> {
   // Canonical text for the unique constraint
   const addrObj: Record<string, string> = {};
@@ -188,7 +199,7 @@ async function persistAddress(
   const value = canonicalValue(addrObj);
   if (!value || value === '{}') return;
 
-  await upsertAttribute(tx, customerId, 'address', value, addrObj, sourceMessageId, messageDate);
+  await upsertAttribute(tx, customerId, 'address', value, addrObj, sourceMessageId, messageDate, confidence);
 }
 
 async function upsertAttribute(
@@ -199,6 +210,7 @@ async function upsertAttribute(
   valueJson: Record<string, string> | null,
   sourceMessageId: string,
   messageDate: Date,
+  confidence: number = 1.0,
 ): Promise<void> {
   // Check for existing duplicate (idempotency)
   const existing = await tx.customerAttribute.findFirst({
@@ -217,7 +229,7 @@ async function upsertAttribute(
       isCurrent: false,
       sourceMessageId,
       messageDate,
-      confidence: 1.0,
+      confidence,
     },
   });
 
@@ -307,10 +319,13 @@ async function persistInsights(
   person: ExtractedPerson,
   sourceMessageId: string,
   messageDate: Date,
+  fieldConfidence: FieldConfidence,
 ): Promise<void> {
   for (const field of INFERRED_FIELDS) {
     const values = person[field] as string[] | undefined;
     if (!values || values.length === 0) continue;
+
+    const conf = fieldConfidence[field] ?? 0.7;
 
     for (const rawValue of values) {
       const value = rawValue.trim().toLowerCase();
@@ -318,7 +333,7 @@ async function persistInsights(
 
       try {
         await tx.customerInsight.create({
-          data: { customerId, field, value, sourceMessageId, messageDate, confidence: 0.7 },
+          data: { customerId, field, value, sourceMessageId, messageDate, confidence: conf },
         });
       } catch (err) {
         // P2002 = unique constraint violation → already exists, skip silently

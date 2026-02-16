@@ -1,7 +1,7 @@
 .PHONY: help install dev build start clean test test-unit test-integration test-e2e test-watch test-coverage \
         db-up db-down db-migrate db-migrate-deploy db-generate db-studio db-reset \
         docker-up docker-down docker-build docker-logs docker-restart docker-up-detached \
-        ingest lint typecheck verify
+        ingest ingest-unknown generate-unknown lint typecheck verify
 
 # ─── Help ────────────────────────────────────────────────────────────
 help: ## Show this help
@@ -97,6 +97,12 @@ docker-restart: ## Restart all services
 # ─── Dataset ─────────────────────────────────────────────────────────
 ingest: ## Ingest all 15 dataset messages into running service
 	npx tsx scripts/ingest-dataset.ts
+
+generate-unknown: ## Generate local unknown input messages (gitignored)
+	npx tsx scripts/generate-unknown-inputs.ts
+
+ingest-unknown: ## Ingest locally generated unknown input messages
+	npx tsx scripts/ingest-unknown-inputs.ts
 
 # ─── Verification ────────────────────────────────────────────────────
 verify: ## Full verification: typecheck + test + build
