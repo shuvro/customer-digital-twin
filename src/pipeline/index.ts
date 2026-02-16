@@ -7,6 +7,8 @@ import { persistExtraction } from './persist.js';
 import type { InboundMessage } from '../types/message.js';
 import type { PipelineContext } from '../types/pipeline.js';
 import { Prisma } from '@prisma/client';
+import { metrics } from '../observability/metrics.js';
+import type { Logger } from 'pino';
 
 // If a message has been PROCESSING for longer than this, treat it as abandoned
 // (process crash, kill, timeout) and allow re-processing.
@@ -20,13 +22,15 @@ export interface PipelineResult {
   signals: string[];
 }
 
-export async function processMessage(message: InboundMessage): Promise<PipelineResult> {
+export async function processMessage(message: InboundMessage, requestId?: string): Promise<PipelineResult> {
   const messageId = message.id;
+  const pipelineStart = Date.now();
+  const log: Logger = requestId ? logger.child({ requestId }) : logger;
 
   // Fast-path idempotency check (no lock needed)
   const existing = await prisma.message.findUnique({ where: { id: messageId } });
   if (existing?.status === 'COMPLETED') {
-    logger.info({ messageId }, 'Message already processed, returning cached result');
+    log.info({ messageId }, 'Message already processed, returning cached result');
     return {
       messageId,
       customerId: existing.customerId,
@@ -63,12 +67,12 @@ export async function processMessage(message: InboundMessage): Promise<PipelineR
       }
 
       // Stale PROCESSING — reclaim by falling through to upsert below
-      logger.warn({ messageId, ageMs: effectiveAge }, 'Reclaiming stale PROCESSING message');
+      log.warn({ messageId, ageMs: effectiveAge }, 'Reclaiming stale PROCESSING message');
     }
 
     if (afterLock?.status === 'FAILED') {
       // Previously failed — allow retry by falling through to upsert below
-      logger.info({ messageId }, 'Retrying previously FAILED message');
+      log.info({ messageId }, 'Retrying previously FAILED message');
     }
 
     // Claim the message (create or reclaim)
@@ -114,11 +118,17 @@ export async function processMessage(message: InboundMessage): Promise<PipelineR
   }
 
   // --- Phase 2: Extract + Search + Decide + Persist ---
+  // We only count messagesReceived once we've claimed exclusive processing.
+  // Idempotent/concurrent duplicates exit above without inflating counters.
+  metrics.increment('messagesReceived');
+
   // Entire post-claim pipeline is wrapped in try/catch so any failure
   // (extraction, search, decide, or persist) marks the message as FAILED.
   try {
     // LLM extraction (outside any transaction — no DB connection held)
+    const extractStart = Date.now();
     const extraction = await extractFromMessage(message);
+    metrics.recordTiming('extract', Date.now() - extractStart);
 
     // No persons extracted → mark completed, no customer
     if (extraction.persons.length === 0) {
@@ -131,15 +141,23 @@ export async function processMessage(message: InboundMessage): Promise<PipelineR
           processedAt: new Date(),
         },
       });
+      metrics.increment('messagesSkipped');
+      metrics.increment('messagesProcessed');
+      metrics.recordTiming('total', Date.now() - pipelineStart);
       return { messageId, customerId: null, action: 'SKIP', score: 0, signals: [] };
     }
 
     const person = extraction.persons[0];
-    const ctx: PipelineContext = { message, extraction, person };
+    const ctx: PipelineContext = { message, extraction, person, requestId };
 
     // Search + Decide (reads from DB, pure logic)
+    const searchStart = Date.now();
     const searchResult = await searchCustomers(ctx);
+    metrics.recordTiming('search', Date.now() - searchStart);
+
+    const decideStart = Date.now();
     const decision = decideAction(ctx, searchResult);
+    metrics.recordTiming('decide', Date.now() - decideStart);
     ctx.decision = decision;
 
     if (decision.action === 'SKIP') {
@@ -152,10 +170,14 @@ export async function processMessage(message: InboundMessage): Promise<PipelineR
           processedAt: new Date(),
         },
       });
+      metrics.increment('messagesSkipped');
+      metrics.increment('messagesProcessed');
+      metrics.recordTiming('total', Date.now() - pipelineStart);
       return { messageId, customerId: null, action: 'SKIP', score: 0, signals: [] };
     }
 
     // --- Phase 3: Short transaction to persist + mark COMPLETED ---
+    const persistStart = Date.now();
     const customerId = await prisma.$transaction(async (tx) => {
       const cid = await persistExtraction(ctx, tx);
 
@@ -174,8 +196,15 @@ export async function processMessage(message: InboundMessage): Promise<PipelineR
 
       return cid;
     }, { timeout: 30000 });
+    metrics.recordTiming('persist', Date.now() - persistStart);
 
-    logger.info({ messageId, customerId, action: decision.action }, 'Pipeline completed');
+    if (decision.action === 'CREATE') metrics.increment('customersCreated');
+    else if (decision.action === 'UPDATE') metrics.increment('customersUpdated');
+
+    metrics.increment('messagesProcessed');
+    metrics.recordTiming('total', Date.now() - pipelineStart);
+
+    log.info({ messageId, customerId, action: decision.action }, 'Pipeline completed');
 
     return {
       messageId,
@@ -185,8 +214,10 @@ export async function processMessage(message: InboundMessage): Promise<PipelineR
       signals: decision.signals,
     };
   } catch (err) {
+    metrics.increment('messagesFailed');
+    metrics.recordTiming('total', Date.now() - pipelineStart);
     // Any failure in extract/search/decide/persist → mark FAILED outside transaction
-    await markFailed(messageId, message, err);
+    await markFailed(log, messageId, message, err);
     throw err;
   }
 }
@@ -195,7 +226,7 @@ export async function processMessage(message: InboundMessage): Promise<PipelineR
  * Mark a message as FAILED outside any transaction so the status persists
  * even when the main transaction rolled back.
  */
-async function markFailed(messageId: string, message: InboundMessage, err: unknown): Promise<void> {
+async function markFailed(log: Logger, messageId: string, message: InboundMessage, err: unknown): Promise<void> {
   const errorMsg = err instanceof Error ? err.message : String(err);
   try {
     await prisma.message.upsert({
@@ -214,7 +245,7 @@ async function markFailed(messageId: string, message: InboundMessage, err: unkno
       },
     });
   } catch {
-    logger.error({ messageId }, 'Failed to mark message as FAILED');
+    log.error({ messageId }, 'Failed to mark message as FAILED');
   }
 }
 

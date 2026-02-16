@@ -9,6 +9,7 @@ export interface PipelineContext {
   customerId?: string;
   matchScore?: number;
   matchSignals?: string[];
+  requestId?: string;
 }
 
 export type PipelineDecisionAction = 'CREATE' | 'UPDATE' | 'SKIP';

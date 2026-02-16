@@ -7,10 +7,11 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
   app.post('/messages', { schema: postMessageSchema }, async (request, reply) => {
     const message = request.body as InboundMessage;
 
-    const result = await processMessage(message);
+    const result = await processMessage(message, request.id);
 
     return reply.status(200).send({
       status: 'ok',
+      requestId: request.id,
       messageId: result.messageId,
       customerId: result.customerId,
       action: result.action,
@@ -25,7 +26,7 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
 
     for (const message of messages) {
       try {
-        const result = await processMessage(message);
+        const result = await processMessage(message, request.id);
         results.push({
           status: 'ok',
           messageId: result.messageId,

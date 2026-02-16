@@ -240,9 +240,9 @@ async function upsertAttribute(
 //
 // Scalar mutable fields (maritalStatus, occupation, employer) follow strict
 // "latest messageDate wins" — only one value is current at a time.
-const LIST_FIELDS = new Set(['email', 'phone', 'address']);
+export const LIST_FIELDS = new Set(['email', 'phone', 'address']);
 
-async function recalculateCurrent(
+export async function recalculateCurrent(
   tx: TxClient,
   customerId: string,
   field: string,

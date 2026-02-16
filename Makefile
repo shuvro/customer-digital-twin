@@ -18,6 +18,7 @@ dev: ## Start dev server with hot reload
 
 build: ## Compile TypeScript to dist/
 	npx tsc
+	rm -rf dist/public && cp -r src/public dist/public
 
 start: ## Run compiled JS from dist/
 	node dist/index.js
@@ -105,4 +106,5 @@ verify: ## Full verification: typecheck + test + build
 	npx vitest run
 	@echo "==> Building..."
 	npx tsc
+	rm -rf dist/public && cp -r src/public dist/public
 	@echo "==> All checks passed!"
