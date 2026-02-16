@@ -1,16 +1,19 @@
 import { callWithRetryAndFallback } from '../llm/retry.js';
 import { SYSTEM_PROMPT, buildUserPrompt } from '../llm/prompts.js';
+import { buildContextEnhancedUserPrompt } from '../llm/context-prompts.js';
 import { parseExtractionResponse } from '../llm/parser.js';
 import type { InboundMessage } from '../types/message.js';
 import type { ExtractionResult, ExtractedPerson } from '../types/extraction.js';
+import type { CustomerContext } from './context-builder.js';
 import { logger } from '../logger.js';
 import { LLMParsingError } from '../errors.js';
+import { toErrorMessage } from '../utils/errors.js';
 
 /**
  * Post-extraction validation: sanity-check extracted fields.
  * Invalid fields are removed (set to null or filtered out).
  */
-function validateExtraction(person: ExtractedPerson): ExtractedPerson {
+export function validateExtraction(person: ExtractedPerson): ExtractedPerson {
   const validated = { ...person };
 
   // DOB plausibility
@@ -72,9 +75,11 @@ function validateExtraction(person: ExtractedPerson): ExtractedPerson {
   return validated;
 }
 
-export async function extractFromMessage(message: InboundMessage): Promise<ExtractionResult> {
-  const userPrompt = buildUserPrompt(message);
-
+/**
+ * Core extraction logic: call LLM with a prompt, parse the response,
+ * retry once with error feedback on parse failure, then validate.
+ */
+async function runExtraction(messageId: string, userPrompt: string, label: string): Promise<ExtractionResult> {
   const raw = await callWithRetryAndFallback({
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
@@ -84,9 +89,8 @@ export async function extractFromMessage(message: InboundMessage): Promise<Extra
   try {
     result = parseExtractionResponse(raw);
   } catch (parseErr) {
-    // Retry once with error feedback
-    logger.warn({ messageId: message.id }, 'First parse failed, retrying with error feedback');
-    const retryPrompt = `${userPrompt}\n\n[SYSTEM NOTE: Your previous response was not valid JSON. Error: ${(parseErr as Error).message}. Please respond with ONLY a valid JSON object matching the schema.]`;
+    logger.warn({ messageId }, `${label} parse failed, retrying with error feedback`);
+    const retryPrompt = `${userPrompt}\n\n[SYSTEM NOTE: Your previous response was not valid JSON. Error: ${toErrorMessage(parseErr)}. Please respond with ONLY a valid JSON object matching the schema.]`;
     try {
       const retryRaw = await callWithRetryAndFallback({
         systemPrompt: SYSTEM_PROMPT,
@@ -94,20 +98,31 @@ export async function extractFromMessage(message: InboundMessage): Promise<Extra
       });
       result = parseExtractionResponse(retryRaw);
     } catch {
-      throw new LLMParsingError(`Failed to parse LLM response after retry: ${(parseErr as Error).message}`);
+      throw new LLMParsingError(`Failed to parse LLM response after retry: ${toErrorMessage(parseErr)}`);
     }
   }
 
-  // Store raw response for debugging
   result.rawResponse = raw;
-
-  // Validate each person
   result.persons = result.persons.map(validateExtraction);
 
-  logger.info({
-    messageId: message.id,
-    personCount: result.persons.length,
-  }, 'Extraction completed');
+  logger.info({ messageId, personCount: result.persons.length }, `${label} completed`);
 
   return result;
+}
+
+export async function extractFromMessage(message: InboundMessage): Promise<ExtractionResult> {
+  return runExtraction(message.id, buildUserPrompt(message), 'Extraction');
+}
+
+export async function reExtractWithContext(
+  message: InboundMessage,
+  customerContext: CustomerContext,
+): Promise<ExtractionResult | null> {
+  try {
+    const userPrompt = buildContextEnhancedUserPrompt(message, customerContext);
+    return await runExtraction(message.id, userPrompt, 'Re-extraction with context');
+  } catch (err) {
+    logger.warn({ messageId: message.id, error: toErrorMessage(err) }, 'Re-extraction failed, falling back to original extraction');
+    return null;
+  }
 }

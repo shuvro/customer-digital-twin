@@ -1,6 +1,7 @@
 import { extractionResultSchema } from '../schemas/extraction.schema.js';
 import { LLMParsingError } from '../errors.js';
 import type { ExtractionResult } from '../types/extraction.js';
+import { toErrorMessage } from '../utils/errors.js';
 import { logger } from '../logger.js';
 
 export function extractJsonFromResponse(raw: string): string {
@@ -32,7 +33,7 @@ export function parseExtractionResponse(raw: string): ExtractionResult {
   try {
     parsed = JSON.parse(jsonStr);
   } catch (e) {
-    throw new LLMParsingError(`Invalid JSON in LLM response: ${(e as Error).message}`);
+    throw new LLMParsingError(`Invalid JSON in LLM response: ${toErrorMessage(e)}`);
   }
 
   const result = extractionResultSchema.safeParse(parsed);

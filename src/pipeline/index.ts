@@ -1,19 +1,33 @@
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
-import { extractFromMessage } from './extract.js';
-import { searchCustomers } from './search.js';
+import { extractFromMessage, reExtractWithContext } from './extract.js';
+import { searchCustomers, type SearchResult } from './search.js';
 import { decideAction } from './decide.js';
 import { persistExtraction } from './persist.js';
+import { PipelineLogger } from './pipeline-logger.js';
+import { buildCustomerContext } from './context-builder.js';
+import { mergeExtractions, mergeConfidence } from './merge-extractions.js';
 import type { InboundMessage } from '../types/message.js';
-import type { PipelineContext } from '../types/pipeline.js';
+import type { PipelineContext, PipelineDecision } from '../types/pipeline.js';
+import type { ExtractionResult, ExtractedPerson } from '../types/extraction.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { metrics } from '../observability/metrics.js';
 import { hashText } from '../utils/hash.js';
+import { config } from '../config.js';
+import { toErrorMessage, safeErrorMessage } from '../utils/errors.js';
+import { round2 } from '../utils/normalize.js';
 import type { Logger } from 'pino';
+import type { PipelineStage } from '../generated/prisma/client.js';
 
 // If a message has been PROCESSING for longer than this, treat it as abandoned
 // (process crash, kill, timeout) and allow re-processing.
 const STALE_PROCESSING_MS = 5 * 60 * 1000; // 5 minutes
+
+const STRONG_SIGNALS = new Set(['taxId', 'email', 'phone', 'direct_lookup']);
+
+function countStrongSignals(signals: string[]): number {
+  return signals.filter(s => STRONG_SIGNALS.has(s)).length;
+}
 
 export interface PipelineResult {
   messageId: string;
@@ -23,12 +37,296 @@ export interface PipelineResult {
   signals: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Helpers: extracted from processMessage to keep the orchestrator lean
+// ---------------------------------------------------------------------------
+
+function extractionConfidence(extraction: { confidence: Record<string, number> }): number {
+  const values = Object.values(extraction.confidence);
+  if (values.length === 0) return 0;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+/** List the non-empty field names on the first extracted person. */
+function nonEmptyFields(person: ExtractedPerson): string[] {
+  return Object.keys(person).filter(k => {
+    const v = (person as Record<string, unknown>)[k];
+    return v != null && v !== '' && !(Array.isArray(v) && v.length === 0);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Stage: EXTRACT
+// ---------------------------------------------------------------------------
+
+interface ExtractStageResult {
+  extraction: ExtractionResult;
+  person: ExtractedPerson;
+}
+
+async function runExtractStage(
+  message: InboundMessage,
+  pipelineLogger: PipelineLogger,
+): Promise<ExtractStageResult | null> {
+  const extractStart = Date.now();
+  const extraction = await extractFromMessage(message);
+  const extractDuration = Date.now() - extractStart;
+  metrics.recordTiming('extract', extractDuration);
+
+  const fieldsExtracted = extraction.persons.length > 0
+    ? nonEmptyFields(extraction.persons[0])
+    : [];
+
+  const avgConfidence = extractionConfidence(extraction);
+
+  pipelineLogger.log('EXTRACT', `Extracted ${extraction.persons.length} person(s)`, {
+    personCount: extraction.persons.length,
+    fieldsExtracted,
+    avgConfidence: round2(avgConfidence),
+  }, extractDuration);
+
+  if (extraction.persons.length === 0) return null;
+
+  return { extraction, person: extraction.persons[0] };
+}
+
+// ---------------------------------------------------------------------------
+// Stage: SEARCH
+// ---------------------------------------------------------------------------
+
+async function runSearchStage(
+  ctx: PipelineContext,
+  pipelineLogger: PipelineLogger,
+): Promise<SearchResult> {
+  const searchStart = Date.now();
+  const searchResult = await searchCustomers(ctx);
+  const searchDuration = Date.now() - searchStart;
+  metrics.recordTiming('search', searchDuration);
+
+  const directLookupHits = searchResult.candidates.filter(c => c.signals.includes('direct_lookup')).length;
+
+  // Capture top candidates (up to 5) for full search traceability.
+  // This enables evaluators and auditors to see not just WHO was matched,
+  // but all candidates considered and why each scored as it did.
+  const topCandidates = searchResult.candidates.slice(0, 5).map(c => ({
+    customerId: c.customerId,
+    score: round2(c.score),
+    signals: c.signals,
+    taxIdMatch: c.taxIdMatch,
+  }));
+
+  pipelineLogger.log('SEARCH', `Found ${searchResult.candidates.length} candidate(s), best score ${(searchResult.bestMatch?.score ?? 0).toFixed(2)}`, {
+    candidateCount: searchResult.candidates.length,
+    bestScore: round2(searchResult.bestMatch?.score ?? 0),
+    bestSignals: searchResult.bestMatch?.signals ?? [],
+    directLookupHits,
+    topCandidates,
+  }, searchDuration);
+
+  return searchResult;
+}
+
+// ---------------------------------------------------------------------------
+// Stage: RE_EXTRACT (context-aware re-extraction)
+// ---------------------------------------------------------------------------
+
+interface ReExtractStageResult {
+  person: ExtractedPerson;
+  finalExtraction: ExtractionResult;
+}
+
+async function runReExtractStage(
+  message: InboundMessage,
+  log: Logger,
+  searchResult: SearchResult,
+  person: ExtractedPerson,
+  extraction: ExtractionResult,
+  pipelineLogger: PipelineLogger,
+): Promise<ReExtractStageResult> {
+  const bestMatch = searchResult.bestMatch;
+  const shouldReExtract = bestMatch && (
+      bestMatch.taxIdMatch ||
+      bestMatch.score >= config.matching.highThreshold ||
+      (bestMatch.score >= config.matching.lowThreshold && countStrongSignals(bestMatch.signals) >= 2)
+  );
+
+  if (!shouldReExtract) {
+    pipelineLogger.log('RE_EXTRACT', 'Re-extraction not triggered (match confidence too low)', {
+      triggered: false,
+      fieldsChanged: [],
+      fieldsAdded: [],
+      mergeStrategy: 'none',
+    });
+    return { person, finalExtraction: extraction };
+  }
+
+  // bestMatch is guaranteed non-null here (shouldReExtract implies it)
+  const reExtractStart = Date.now();
+  try {
+    const customerContext = await buildCustomerContext(bestMatch.customerId);
+    const reExtractionResult = await reExtractWithContext(message, customerContext);
+
+    if (reExtractionResult && reExtractionResult.persons.length > 0) {
+      const mergeResult = mergeExtractions(person, reExtractionResult.persons[0]);
+
+      pipelineLogger.log('RE_EXTRACT', `Re-extracted with customer context, ${mergeResult.fieldsChanged.length} field(s) changed`, {
+        triggered: true,
+        fieldsChanged: mergeResult.fieldsChanged,
+        fieldsAdded: mergeResult.fieldsAdded,
+        mergeStrategy: 'conservative',
+      }, Date.now() - reExtractStart);
+
+      return {
+        person: mergeResult.merged,
+        finalExtraction: {
+          ...extraction,
+          persons: [mergeResult.merged],
+          confidence: mergeConfidence(extraction.confidence, reExtractionResult.confidence),
+        },
+      };
+    }
+
+    pipelineLogger.log('RE_EXTRACT', 'Re-extraction returned no results, keeping original', {
+      triggered: true,
+      fieldsChanged: [],
+      fieldsAdded: [],
+      mergeStrategy: 'fallback_to_original',
+    }, Date.now() - reExtractStart);
+  } catch (reExtractErr) {
+    pipelineLogger.log('RE_EXTRACT', 'Re-extraction failed, keeping original', {
+      triggered: true,
+      fieldsChanged: [],
+      fieldsAdded: [],
+      mergeStrategy: 'fallback_to_original',
+    }, Date.now() - reExtractStart);
+    log.warn({ messageId: message.id, error: toErrorMessage(reExtractErr) }, 'Re-extraction failed');
+  }
+
+  return { person, finalExtraction: extraction };
+}
+
+// ---------------------------------------------------------------------------
+// Stage: DECIDE
+// ---------------------------------------------------------------------------
+
+function runDecideStage(
+  ctx: PipelineContext,
+  searchResult: SearchResult,
+  pipelineLogger: PipelineLogger,
+): PipelineDecision {
+  const decideStart = Date.now();
+  const decision = decideAction(ctx, searchResult);
+  const decideDuration = Date.now() - decideStart;
+  metrics.recordTiming('decide', decideDuration);
+
+  pipelineLogger.log('DECIDE', `${decision.action} via ${decision.decisionCode}`, {
+    action: decision.action,
+    decisionCode: decision.decisionCode,
+    score: round2(decision.score),
+    signals: decision.signals,
+  }, decideDuration);
+
+  return decision;
+}
+
+// ---------------------------------------------------------------------------
+// Stage: PERSIST
+// ---------------------------------------------------------------------------
+
+async function runPersistStage(
+  ctx: PipelineContext,
+  finalExtraction: ExtractionResult,
+  decision: PipelineDecision,
+  pipelineLogger: PipelineLogger,
+): Promise<string> {
+  const messageId = ctx.message.id;
+  const persistStart = Date.now();
+
+  const customerId = await prisma.$transaction(async (tx) => {
+    const cid = await persistExtraction(ctx, tx);
+
+    await tx.message.update({
+      where: { id: messageId },
+      data: {
+        status: 'COMPLETED',
+        customerId: cid,
+        extractionResult: finalExtraction as unknown as Prisma.InputJsonValue,
+        confidence: extractionConfidence(finalExtraction),
+        matchScore: decision.score,
+        matchSignals: decision.signals as unknown as Prisma.InputJsonValue,
+        decisionReasoning: decision.reasoning,
+        decisionCode: decision.decisionCode,
+        processedAt: new Date(),
+      },
+    });
+
+    const [identitiesWritten, attributesWritten, insightsWritten] = await Promise.all([
+      tx.customerIdentity.count({ where: { sourceMessageId: messageId } }),
+      tx.customerAttribute.count({ where: { sourceMessageId: messageId } }),
+      tx.customerInsight.count({ where: { sourceMessageId: messageId } }),
+    ]);
+
+    pipelineLogger.log('PERSIST', `Persisted to customer ${cid}`, {
+      customerId: cid,
+      identitiesWritten,
+      attributesWritten,
+      insightsWritten,
+    }, Date.now() - persistStart);
+
+    // Flush logs atomically with data
+    await pipelineLogger.flush(tx);
+
+    return cid;
+  }, { timeout: 30000 });
+
+  metrics.recordTiming('persist', Date.now() - persistStart);
+  return customerId;
+}
+
+// ---------------------------------------------------------------------------
+// Error handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark a message as FAILED outside any transaction so the status persists
+ * even when the main transaction rolled back.
+ */
+async function markFailed(log: Logger, messageId: string, message: InboundMessage, err: unknown): Promise<void> {
+  const safeMsg = safeErrorMessage(err, 500);
+  try {
+    await prisma.message.upsert({
+      where: { id: messageId },
+      create: {
+        id: messageId,
+        source: message.source,
+        messageDate: new Date(message.messageDate),
+        rawPayload: message as unknown as Prisma.InputJsonValue,
+        status: 'FAILED',
+        errorMessage: safeMsg,
+      },
+      update: {
+        status: 'FAILED',
+        errorMessage: safeMsg,
+      },
+    });
+  } catch {
+    log.error({ messageId }, 'Failed to mark message as FAILED');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator
+// ---------------------------------------------------------------------------
+
 export async function processMessage(message: InboundMessage, requestId?: string): Promise<PipelineResult> {
   const messageId = message.id;
   const pipelineStart = Date.now();
   const log: Logger = requestId ? logger.child({ requestId }) : logger;
+  const pipelineLogger = new PipelineLogger(messageId);
 
-  // Fast-path idempotency check (no lock needed)
+  // Fast-path idempotency check (no lock needed).
+  // No audit log for idempotent replays — the canonical pipeline audit trail
+  // from the original processing run is the authoritative record.
   const existing = await prisma.message.findUnique({ where: { id: messageId } });
   if (existing?.status === 'COMPLETED') {
     log.info({ messageId }, 'Message already processed, returning cached result');
@@ -44,7 +342,6 @@ export async function processMessage(message: InboundMessage, requestId?: string
   const lockKey = hashText(messageId);
 
   // --- Phase 1: Short transaction to acquire lock + claim message as PROCESSING ---
-  // Uses pg_advisory_xact_lock (auto-releases on commit/rollback).
   const claimResult = await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${lockKey})`);
 
@@ -55,7 +352,6 @@ export async function processMessage(message: InboundMessage, requestId?: string
     }
 
     if (afterLock?.status === 'PROCESSING') {
-      // Check if the PROCESSING record is stale (abandoned by crashed process)
       const age = Date.now() - afterLock.createdAt.getTime();
       const updatedAge = afterLock.processedAt
         ? Date.now() - afterLock.processedAt.getTime()
@@ -63,20 +359,16 @@ export async function processMessage(message: InboundMessage, requestId?: string
       const effectiveAge = Math.min(age, updatedAge);
 
       if (effectiveAge < STALE_PROCESSING_MS) {
-        // Still fresh — another request is actively processing
         return { alreadyDone: true as const, record: afterLock };
       }
 
-      // Stale PROCESSING — reclaim by falling through to upsert below
       log.warn({ messageId, ageMs: effectiveAge }, 'Reclaiming stale PROCESSING message');
     }
 
     if (afterLock?.status === 'FAILED') {
-      // Previously failed — allow retry by falling through to upsert below
       log.info({ messageId }, 'Retrying previously FAILED message');
     }
 
-    // Claim the message (create or reclaim)
     await tx.message.upsert({
       where: { id: messageId },
       create: {
@@ -89,14 +381,15 @@ export async function processMessage(message: InboundMessage, requestId?: string
       update: {
         status: 'PROCESSING',
         errorMessage: null,
-        processedAt: new Date(), // Update timestamp so staleness resets
+        processedAt: new Date(),
       },
     });
 
     return { alreadyDone: false as const };
   });
 
-  // Handle already-processed / currently-processing
+  // Handle already-processed / currently-processing.
+  // No audit log for idempotent replays.
   if (claimResult.alreadyDone) {
     const record = claimResult.record;
     if (record.status === 'COMPLETED') {
@@ -108,7 +401,6 @@ export async function processMessage(message: InboundMessage, requestId?: string
         signals: (record.matchSignals as string[]) ?? [],
       };
     }
-    // PROCESSING by another active request — return early
     return {
       messageId,
       customerId: record.customerId,
@@ -118,26 +410,20 @@ export async function processMessage(message: InboundMessage, requestId?: string
     };
   }
 
-  // --- Phase 2: Extract + Search + Decide + Persist ---
-  // We only count messagesReceived once we've claimed exclusive processing.
-  // Idempotent/concurrent duplicates exit above without inflating counters.
+  // --- Phase 2: Extract + Search + Re-extract + Decide + Persist ---
   metrics.increment('messagesReceived');
+  let lastStage: PipelineStage = 'EXTRACT';
 
-  // Entire post-claim pipeline is wrapped in try/catch so any failure
-  // (extraction, search, decide, or persist) marks the message as FAILED.
   try {
-    // LLM extraction (outside any transaction — no DB connection held)
-    const extractStart = Date.now();
-    const extraction = await extractFromMessage(message);
-    metrics.recordTiming('extract', Date.now() - extractStart);
+    // EXTRACT
+    const extractResult = await runExtractStage(message, pipelineLogger);
 
-    // No persons extracted → mark completed, no customer
-    if (extraction.persons.length === 0) {
+    if (!extractResult) {
       await prisma.message.update({
         where: { id: messageId },
         data: {
           status: 'COMPLETED',
-          extractionResult: extraction as unknown as Prisma.InputJsonValue,
+          extractionResult: { persons: [], confidence: {} } as unknown as Prisma.InputJsonValue,
           confidence: 0,
           processedAt: new Date(),
         },
@@ -145,20 +431,28 @@ export async function processMessage(message: InboundMessage, requestId?: string
       metrics.increment('messagesSkipped');
       metrics.increment('messagesProcessed');
       metrics.recordTiming('total', Date.now() - pipelineStart);
+      await pipelineLogger.flushDirect();
       return { messageId, customerId: null, action: 'SKIP', score: 0, signals: [] };
     }
 
-    const person = extraction.persons[0];
-    const ctx: PipelineContext = { message, extraction, person, requestId };
+    const { extraction, person: initialPerson } = extractResult;
+    const ctx: PipelineContext = { message, extraction, person: initialPerson, requestId };
 
-    // Search + Decide (reads from DB, pure logic)
-    const searchStart = Date.now();
-    const searchResult = await searchCustomers(ctx);
-    metrics.recordTiming('search', Date.now() - searchStart);
+    // SEARCH
+    lastStage = 'SEARCH';
+    const searchResult = await runSearchStage(ctx, pipelineLogger);
 
-    const decideStart = Date.now();
-    const decision = decideAction(ctx, searchResult);
-    metrics.recordTiming('decide', Date.now() - decideStart);
+    // RE_EXTRACT
+    lastStage = 'RE_EXTRACT';
+    const { person, finalExtraction } = await runReExtractStage(
+      message, log, searchResult, initialPerson, extraction, pipelineLogger,
+    );
+    ctx.person = person;
+    ctx.extraction = finalExtraction;
+
+    // DECIDE
+    lastStage = 'DECIDE';
+    const decision = runDecideStage(ctx, searchResult, pipelineLogger);
     ctx.decision = decision;
 
     if (decision.action === 'SKIP') {
@@ -166,38 +460,23 @@ export async function processMessage(message: InboundMessage, requestId?: string
         where: { id: messageId },
         data: {
           status: 'COMPLETED',
-          extractionResult: extraction as unknown as Prisma.InputJsonValue,
-          confidence: extractionConfidence(extraction),
+          extractionResult: finalExtraction as unknown as Prisma.InputJsonValue,
+          confidence: extractionConfidence(finalExtraction),
+          decisionReasoning: decision.reasoning,
+          decisionCode: decision.decisionCode,
           processedAt: new Date(),
         },
       });
       metrics.increment('messagesSkipped');
       metrics.increment('messagesProcessed');
       metrics.recordTiming('total', Date.now() - pipelineStart);
+      await pipelineLogger.flushDirect();
       return { messageId, customerId: null, action: 'SKIP', score: 0, signals: [] };
     }
 
-    // --- Phase 3: Short transaction to persist + mark COMPLETED ---
-    const persistStart = Date.now();
-    const customerId = await prisma.$transaction(async (tx) => {
-      const cid = await persistExtraction(ctx, tx);
-
-      await tx.message.update({
-        where: { id: messageId },
-        data: {
-          status: 'COMPLETED',
-          customerId: cid,
-          extractionResult: extraction as unknown as Prisma.InputJsonValue,
-          confidence: extractionConfidence(extraction),
-          matchScore: decision.score,
-          matchSignals: decision.signals as unknown as Prisma.InputJsonValue,
-          processedAt: new Date(),
-        },
-      });
-
-      return cid;
-    }, { timeout: 30000 });
-    metrics.recordTiming('persist', Date.now() - persistStart);
+    // PERSIST
+    lastStage = 'PERSIST';
+    const customerId = await runPersistStage(ctx, finalExtraction, decision, pipelineLogger);
 
     if (decision.action === 'CREATE') metrics.increment('customersCreated');
     else if (decision.action === 'UPDATE') metrics.increment('customersUpdated');
@@ -217,41 +496,21 @@ export async function processMessage(message: InboundMessage, requestId?: string
   } catch (err) {
     metrics.increment('messagesFailed');
     metrics.recordTiming('total', Date.now() - pipelineStart);
-    // Any failure in extract/search/decide/persist → mark FAILED outside transaction
+
+    const safeMsg = safeErrorMessage(err, 200);
+
+    pipelineLogger.log(lastStage, `Pipeline failed at ${lastStage} stage`, {
+      stage: lastStage,
+      errorType: err instanceof Error ? err.constructor.name : 'Unknown',
+      errorMessage: safeMsg,
+    });
+    try {
+      await pipelineLogger.flushDirect();
+    } catch {
+      log.warn({ messageId }, 'Failed to flush pipeline audit log on error path');
+    }
+
     await markFailed(log, messageId, message, err);
     throw err;
   }
-}
-
-/**
- * Mark a message as FAILED outside any transaction so the status persists
- * even when the main transaction rolled back.
- */
-async function markFailed(log: Logger, messageId: string, message: InboundMessage, err: unknown): Promise<void> {
-  const errorMsg = err instanceof Error ? err.message : String(err);
-  try {
-    await prisma.message.upsert({
-      where: { id: messageId },
-      create: {
-        id: messageId,
-        source: message.source,
-        messageDate: new Date(message.messageDate),
-        rawPayload: message as unknown as Prisma.InputJsonValue,
-        status: 'FAILED',
-        errorMessage: errorMsg.slice(0, 500),
-      },
-      update: {
-        status: 'FAILED',
-        errorMessage: errorMsg.slice(0, 500),
-      },
-    });
-  } catch {
-    log.error({ messageId }, 'Failed to mark message as FAILED');
-  }
-}
-
-function extractionConfidence(extraction: { confidence: Record<string, number> }): number {
-  const values = Object.values(extraction.confidence);
-  if (values.length === 0) return 0;
-  return values.reduce((sum, v) => sum + v, 0) / values.length;
 }

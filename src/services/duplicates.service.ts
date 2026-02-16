@@ -1,5 +1,7 @@
 import { prisma } from '../db.js';
 import { scoreCandidate, toCustomerForScoring } from '../matching/scorer.js';
+import { formatDateAsISO } from '../utils/normalize.js';
+import { extractFieldValues } from '../utils/extraction-helpers.js';
 import type { ExtractedPerson } from '../types/extraction.js';
 
 export interface DuplicatePair {
@@ -76,11 +78,11 @@ function customerToPerson(c: CustomerWithAttrs): ExtractedPerson {
   return {
     firstName: c.firstName ?? undefined,
     lastName: c.lastName ?? undefined,
-    dateOfBirth: c.dateOfBirth?.toISOString().split('T')[0],
+    dateOfBirth: formatDateAsISO(c.dateOfBirth) ?? undefined,
     gender: c.gender ?? undefined,
     taxId: c.taxId ?? undefined,
     nationality: c.nationality ?? undefined,
-    emails: c.attributes.filter((a) => a.field === 'email').map((a) => a.value),
-    phones: c.attributes.filter((a) => a.field === 'phone').map((a) => a.value),
+    emails: extractFieldValues(c.attributes, 'email'),
+    phones: extractFieldValues(c.attributes, 'phone'),
   };
 }

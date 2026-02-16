@@ -14,29 +14,66 @@ enum MessageStatus {
   FAILED
 }
 
+enum PipelineStage {
+  EXTRACT
+  SEARCH
+  DECIDE
+  PERSIST
+  RE_EXTRACT
+}
+
+enum DecisionCode {
+  TAXID_MATCH
+  HIGH_CONFIDENCE
+  MEDIUM_CONFIDENCE
+  BELOW_THRESHOLD
+  NO_CANDIDATES
+  NO_IDENTIFYING_INFO
+}
+
 model Message {
-  id               String        @id
-  source           String
-  messageDate      DateTime
-  rawPayload       Json
-  status           MessageStatus @default(PENDING)
-  errorMessage     String?
-  processedAt      DateTime?
-  customerId       String?
-  extractionResult Json?
-  confidence       Float?
-  matchScore       Float?
-  matchSignals     Json?
-  createdAt        DateTime      @default(now())
+  id                 String        @id
+  source             String
+  messageDate        DateTime
+  rawPayload         Json
+  status             MessageStatus @default(PENDING)
+  errorMessage       String?
+  processedAt        DateTime?
+  customerId         String?
+  extractionResult   Json?
+  confidence         Float?
+  matchScore         Float?
+  matchSignals       Json?
+  decisionReasoning  String?       @db.Text
+  decisionCode       DecisionCode?
+  createdAt          DateTime      @default(now())
 
   customer           Customer?           @relation(fields: [customerId], references: [id])
   sourcedIdentities  CustomerIdentity[]
   sourcedAttributes  CustomerAttribute[]
   sourcedInsights    CustomerInsight[]
+  pipelineLogs       PipelineLog[]
 
   @@index([customerId])
   @@index([status])
   @@index([messageDate])
+}
+
+model PipelineLog {
+  id         String        @id @default(cuid())
+  messageId  String
+  stage      PipelineStage
+  sequence   Int
+  timestamp  DateTime
+  durationMs Int?
+  input      Json?
+  output     Json?
+  summary    String        @db.Text
+  createdAt  DateTime      @default(now())
+
+  message Message @relation(fields: [messageId], references: [id])
+
+  @@unique([messageId, sequence])
 }
 
 model Customer {

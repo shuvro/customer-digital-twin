@@ -3,6 +3,7 @@ import { getPrimaryClient, getFallbackClient } from './client.js';
 import { config } from '../config.js';
 import { LLMExtractionError } from '../errors.js';
 import { logger } from '../logger.js';
+import { toErrorMessage } from '../utils/errors.js';
 
 interface LLMCallOptions {
   systemPrompt: string;
@@ -44,8 +45,7 @@ export async function callWithRetryAndFallback(opts: LLMCallOptions): Promise<st
     try {
       return await callModel(primary, config.nebius.primary.model, opts);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn({ attempt, model: config.nebius.primary.model, error: msg }, 'Primary LLM call failed');
+      logger.warn({ attempt, model: config.nebius.primary.model, error: toErrorMessage(err) }, 'Primary LLM call failed');
 
       if (attempt < maxRetries) {
         const delay = retryBaseDelayMs * Math.pow(2, attempt - 1);
@@ -60,8 +60,7 @@ export async function callWithRetryAndFallback(opts: LLMCallOptions): Promise<st
   try {
     return await callModel(fallback, config.nebius.fallback.model, opts);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error({ model: config.nebius.fallback.model, error: msg }, 'Fallback LLM call failed');
+    logger.error({ model: config.nebius.fallback.model, error: toErrorMessage(err) }, 'Fallback LLM call failed');
     throw new LLMExtractionError('All LLM attempts exhausted (primary + fallback)');
   }
 }

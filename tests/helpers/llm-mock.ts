@@ -1,30 +1,25 @@
 import type { ExtractionResult } from '../../src/types/extraction.js';
 
 /**
- * Deterministic LLM mock that returns extraction results based on message content patterns.
- * This simulates what the real LLM would extract without needing an API call.
+ * Extract the message body portion from a prompt that may contain customer context.
+ * When "KNOWN CUSTOMER CONTEXT" is present, we only extract from the actual message body
+ * (after "--- MESSAGE BODY ---"), simulating a real LLM that extracts from the message,
+ * not from the context preamble.
  */
-export function mockExtraction(fullText: string): ExtractionResult {
-  const lower = fullText.toLowerCase();
-
-  // Detect which customer the message is about
-  if (lower.includes('garcía') || lower.includes('garcia') || lower.includes('maría') || lower.includes('maria') || lower.includes('12345678a')) {
-    return mockMariaExtraction(fullText);
+function getExtractionText(fullText: string): string {
+  const bodyMarker = '--- MESSAGE BODY ---';
+  const idx = fullText.indexOf(bodyMarker);
+  if (idx !== -1) {
+    return fullText.slice(idx);
   }
-
-  if (lower.includes('weber') || lower.includes('thomas') || lower.includes('65 432 187 909') || lower.includes('65432187909')) {
-    return mockThomasExtraction(fullText);
-  }
-
-  // Unknown message — return empty
-  return { persons: [], confidence: {} };
+  return fullText;
 }
 
-function mockMariaExtraction(fullText: string): ExtractionResult {
-  const lower = fullText.toLowerCase();
-  const person: Record<string, unknown> = {
-    firstName: 'María',
-    lastName: 'García López',
+/** Create a base person object with empty array fields. */
+function createBasePerson(firstName: string, lastName: string): Record<string, unknown> {
+  return {
+    firstName,
+    lastName,
     emails: [] as string[],
     phones: [] as string[],
     addresses: [] as Array<Record<string, string>>,
@@ -35,6 +30,47 @@ function mockMariaExtraction(fullText: string): ExtractionResult {
     familyContext: [] as string[],
     notes: [] as string[],
   };
+}
+
+/** Build confidence map, enhanced when customer context is available. */
+function buildConfidence(person: Record<string, unknown>, hasContext: boolean): Record<string, number> {
+  const confidence: Record<string, number> = { firstName: 1.0, lastName: 1.0 };
+  if (hasContext) {
+    if (person.firstName) confidence.firstName = 1.0;
+    if (person.lastName) confidence.lastName = 1.0;
+    if (person.dateOfBirth) confidence.dateOfBirth = 1.0;
+    if (person.taxId) confidence.taxId = 1.0;
+  }
+  return confidence;
+}
+
+/**
+ * Deterministic LLM mock that returns extraction results based on message content patterns.
+ * This simulates what the real LLM would extract without needing an API call.
+ */
+export function mockExtraction(fullText: string): ExtractionResult {
+  const lower = fullText.toLowerCase();
+  const hasContext = lower.includes('known customer context');
+  // For customer detection, use full text (context helps identify which customer)
+  // For field extraction, use only the message body
+  const extractionText = getExtractionText(fullText);
+
+  // Detect which customer the message is about (using full text for detection)
+  if (lower.includes('garcía') || lower.includes('garcia') || lower.includes('maría') || lower.includes('maria') || lower.includes('12345678a')) {
+    return mockMariaExtraction(extractionText, hasContext);
+  }
+
+  if (lower.includes('weber') || lower.includes('thomas') || lower.includes('65 432 187 909') || lower.includes('65432187909')) {
+    return mockThomasExtraction(extractionText, hasContext);
+  }
+
+  // Unknown message — return empty
+  return { persons: [], confidence: {} };
+}
+
+function mockMariaExtraction(fullText: string, hasContext: boolean = false): ExtractionResult {
+  const lower = fullText.toLowerCase();
+  const person = createBasePerson('María', 'García López');
 
   // Extract based on content patterns
   if (lower.includes('12345678a')) person.taxId = '12345678A';
@@ -98,25 +134,13 @@ function mockMariaExtraction(fullText: string): ExtractionResult {
 
   return {
     persons: [person as any],
-    confidence: { firstName: 1.0, lastName: 1.0 },
+    confidence: buildConfidence(person, hasContext),
   };
 }
 
-function mockThomasExtraction(fullText: string): ExtractionResult {
+function mockThomasExtraction(fullText: string, hasContext: boolean = false): ExtractionResult {
   const lower = fullText.toLowerCase();
-  const person: Record<string, unknown> = {
-    firstName: 'Thomas',
-    lastName: 'Weber',
-    emails: [] as string[],
-    phones: [] as string[],
-    addresses: [] as Array<Record<string, string>>,
-    hobbies: [] as string[],
-    needs: [] as string[],
-    riskIndicators: [] as string[],
-    communicationPreferences: [] as string[],
-    familyContext: [] as string[],
-    notes: [] as string[],
-  };
+  const person = createBasePerson('Thomas', 'Weber');
 
   if (lower.includes('65 432 187 909') || lower.includes('65432187909')) person.taxId = '65 432 187 909';
   if (lower.includes('22.07.1978') || lower.includes('22 july 1978') || lower.includes('1978-07-22')) person.dateOfBirth = '1978-07-22';
@@ -187,6 +211,6 @@ function mockThomasExtraction(fullText: string): ExtractionResult {
 
   return {
     persons: [person as any],
-    confidence: { firstName: 1.0, lastName: 1.0 },
+    confidence: buildConfidence(person, hasContext),
   };
 }

@@ -1,14 +1,18 @@
 import { z } from 'zod';
 
-const addressSchema = z.object({
+// z.looseObject() is the Zod 4 equivalent of z.object({}).passthrough().
+// It validates known keys while allowing unknown keys to pass through — needed
+// because LLM responses may include extra fields we don't want to strip.
+
+const addressSchema = z.looseObject({
   street: z.string().optional().nullable(),
   city: z.string().optional().nullable(),
   postalCode: z.string().optional().nullable(),
   country: z.string().optional().nullable(),
   fullAddress: z.string().optional().nullable(),
-}).passthrough();
+});
 
-const personSchema = z.object({
+const personSchema = z.looseObject({
   firstName: z.string().optional().nullable(),
   lastName: z.string().optional().nullable(),
   dateOfBirth: z.string().optional().nullable(),
@@ -27,12 +31,12 @@ const personSchema = z.object({
   riskIndicators: z.array(z.string()).optional().default([]),
   familyContext: z.array(z.string()).optional().default([]),
   notes: z.array(z.string()).optional().default([]),
-}).passthrough();
+});
 
-export const extractionResultSchema = z.object({
+export const extractionResultSchema = z.looseObject({
   persons: z.array(personSchema).min(0).default([]),
   confidence: z.record(z.string(), z.number()).optional().default({}),
-}).passthrough();
+});
 
 export type ZodExtractionResult = z.infer<typeof extractionResultSchema>;
 export type ZodExtractedPerson = z.infer<typeof personSchema>;

@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import type { CustomerSummary, CustomerDetail } from '../types/customer.js';
 import { LIST_FIELDS } from '../types/fields.js';
+import { formatDateAsISO } from '../utils/normalize.js';
 
 export async function listCustomers(): Promise<CustomerSummary[]> {
   const customers = await prisma.customer.findMany({
@@ -38,7 +39,7 @@ export async function listCustomers(): Promise<CustomerSummary[]> {
       id: c.id,
       firstName: c.firstName,
       lastName: c.lastName,
-      dateOfBirth: c.dateOfBirth?.toISOString().split('T')[0] ?? null,
+      dateOfBirth: formatDateAsISO(c.dateOfBirth),
       nationality: c.nationality,
       gender: c.gender,
       taxId: c.taxId,
@@ -125,7 +126,7 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | nu
     id: customer.id,
     firstName: customer.firstName,
     lastName: customer.lastName,
-    dateOfBirth: customer.dateOfBirth?.toISOString().split('T')[0] ?? null,
+    dateOfBirth: formatDateAsISO(customer.dateOfBirth),
     nationality: customer.nationality,
     gender: customer.gender,
     taxId: customer.taxId,

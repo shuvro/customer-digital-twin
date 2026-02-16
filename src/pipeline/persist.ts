@@ -2,14 +2,10 @@ import { logger } from '../logger.js';
 import { canonicalValue } from '../utils/normalize.js';
 import type { PipelineContext } from '../types/pipeline.js';
 import type { ExtractedPerson, ExtractedAddress, FieldConfidence } from '../types/extraction.js';
+import { IDENTITY_FIELDS, MUTABLE_SCALAR_FIELDS, INFERRED_FIELDS } from '../types/fields.js';
 import { Prisma } from '../generated/prisma/client.js';
 
 export type TxClient = Prisma.TransactionClient;
-
-// Fields classified by data layer
-const IMMUTABLE_FIELDS = ['firstName', 'lastName', 'dateOfBirth', 'nationality', 'gender', 'taxId'] as const;
-const MUTABLE_SCALAR_FIELDS = ['maritalStatus', 'occupation', 'employer'] as const;
-const INFERRED_FIELDS = ['communicationPreferences', 'hobbies', 'needs', 'riskIndicators', 'familyContext', 'notes'] as const;
 
 /**
  * Persist extraction results into the three-layer data model.
@@ -42,7 +38,7 @@ export async function persistExtraction(ctx: PipelineContext, tx: TxClient): Pro
   });
 
   // Layer 1: Immutable identity fields
-  await persistImmutableFields(tx, customerId, person, sourceMessageId, messageDate, confidence);
+  await persistImmutableFields(tx, customerId, person, sourceMessageId, messageDate, confidence, message.source);
 
   // Layer 2: Mutable attributes (scalars)
   await persistMutableScalars(tx, customerId, person, sourceMessageId, messageDate, confidence);
@@ -63,8 +59,9 @@ async function persistImmutableFields(
   sourceMessageId: string,
   messageDate: Date,
   fieldConfidence: FieldConfidence,
+  sourceType: string,
 ): Promise<void> {
-  for (const field of IMMUTABLE_FIELDS) {
+  for (const field of IDENTITY_FIELDS) {
     const raw = person[field];
     if (raw === null || raw === undefined) continue;
 
@@ -95,15 +92,18 @@ async function persistImmutableFields(
     } else if (existing.value === value) {
       // Same value — idempotent, skip
     } else {
-      // Conflict — keep existing, log
+      // Conflict — keep existing, log with source lineage
       logger.warn({
         customerId,
         field,
         sourceMessageId,
         existingSource: existing.sourceMessageId,
+        newSourceType: sourceType,
+        existingConfidence: existing.confidence,
+        newConfidence: conf,
       }, 'Immutable field conflict, keeping existing value');
 
-      // Store conflict in Customer record
+      // Store conflict in Customer record with full lineage
       const customer = await tx.customer.findUniqueOrThrow({ where: { id: customerId } });
       const conflicts = (customer.identityConflicts as Array<Record<string, string>>) || [];
       conflicts.push({
@@ -112,6 +112,10 @@ async function persistImmutableFields(
         newSourceMessageId: sourceMessageId,
         keptValue: existing.value,
         rejectedValue: value,
+        newSourceType: sourceType,
+        existingConfidence: String(existing.confidence),
+        newConfidence: String(conf),
+        detectedAt: new Date().toISOString(),
       });
       await tx.customer.update({
         where: { id: customerId },
@@ -293,21 +297,29 @@ async function persistInsights(
 
     const conf = fieldConfidence[field] ?? 0.7;
 
+    // Deduplicate normalized values — LLM may return duplicates that differ
+    // only in casing/whitespace. Without dedup, the second insert would trigger
+    // a P2002 which aborts the PostgreSQL transaction when using the driver adapter
+    // (no savepoints), causing all subsequent operations to fail.
+    const seen = new Set<string>();
+
     for (const rawValue of values) {
       const value = rawValue.trim().toLowerCase();
-      if (!value) continue;
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
 
-      try {
-        await tx.customerInsight.create({
-          data: { customerId, field, value, sourceMessageId, messageDate, confidence: conf },
-        });
-      } catch (err) {
-        // P2002 = unique constraint violation → already exists, skip silently
-        if ((err as { code?: string }).code === 'P2002') {
-          continue;
-        }
-        throw err;
-      }
+      // Check existence to avoid constraint violations inside the transaction.
+      // The driver adapter does not use savepoints, so a P2002 would abort
+      // the entire PostgreSQL transaction — a try/catch cannot recover from it.
+      const existing = await tx.customerInsight.findFirst({
+        where: { customerId, field, value, sourceMessageId },
+        select: { id: true },
+      });
+      if (existing) continue;
+
+      await tx.customerInsight.create({
+        data: { customerId, field, value, sourceMessageId, messageDate, confidence: conf },
+      });
     }
   }
 }

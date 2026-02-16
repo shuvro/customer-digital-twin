@@ -15,7 +15,7 @@ export async function cleanDatabase(): Promise<void> {
   const prisma = getTestPrisma();
   // Use raw SQL to truncate all tables in the correct order
   await prisma.$executeRawUnsafe(`
-    TRUNCATE TABLE "CustomerInsight", "CustomerAttribute", "CustomerIdentity", "Message", "Customer" CASCADE
+    TRUNCATE TABLE "PipelineLog", "CustomerInsight", "CustomerAttribute", "CustomerIdentity", "Message", "Customer" CASCADE
   `);
 }
 

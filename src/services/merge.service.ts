@@ -102,21 +102,30 @@ export async function mergeCustomers(sourceCustomerId: string, targetCustomerId:
     let attributesMoved = 0;
     const affectedFields = new Set<string>();
     for (const attr of sourceAttributes) {
-      try {
+      // Check if exact duplicate already exists on target before moving.
+      // A try/catch for P2002 doesn't work with @prisma/adapter-pg because
+      // constraint violations abort the PostgreSQL transaction (no savepoints).
+      const duplicateOnTarget = await tx.customerAttribute.findFirst({
+        where: {
+          customerId: targetCustomerId,
+          field: attr.field,
+          sourceMessageId: attr.sourceMessageId,
+          messageDate: attr.messageDate,
+          value: attr.value,
+        },
+        select: { id: true },
+      });
+
+      if (duplicateOnTarget) {
+        await tx.customerAttribute.delete({ where: { id: attr.id } });
+        affectedFields.add(attr.field);
+      } else {
         await tx.customerAttribute.update({
           where: { id: attr.id },
           data: { customerId: targetCustomerId },
         });
         attributesMoved++;
         affectedFields.add(attr.field);
-      } catch (err) {
-        if ((err as { code?: string }).code === 'P2002') {
-          // Exact duplicate already exists on target — delete source
-          await tx.customerAttribute.delete({ where: { id: attr.id } });
-          affectedFields.add(attr.field);
-        } else {
-          throw err;
-        }
       }
     }
 
@@ -132,18 +141,24 @@ export async function mergeCustomers(sourceCustomerId: string, targetCustomerId:
 
     let insightsMoved = 0;
     for (const insight of sourceInsights) {
-      try {
+      const duplicateOnTarget = await tx.customerInsight.findFirst({
+        where: {
+          customerId: targetCustomerId,
+          field: insight.field,
+          value: insight.value,
+          sourceMessageId: insight.sourceMessageId,
+        },
+        select: { id: true },
+      });
+
+      if (duplicateOnTarget) {
+        await tx.customerInsight.delete({ where: { id: insight.id } });
+      } else {
         await tx.customerInsight.update({
           where: { id: insight.id },
           data: { customerId: targetCustomerId },
         });
         insightsMoved++;
-      } catch (err) {
-        if ((err as { code?: string }).code === 'P2002') {
-          await tx.customerInsight.delete({ where: { id: insight.id } });
-        } else {
-          throw err;
-        }
       }
     }
 

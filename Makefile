@@ -1,3 +1,9 @@
+# Load .env values into Make variables, but only export the ones
+# that child processes actually need. Prevents blanket secret leakage.
+-include .env
+export DATABASE_URL
+export NEBIUS_API_KEY
+
 .PHONY: help install dev build start clean test test-unit test-integration test-e2e test-watch test-coverage \
         db-up db-down db-migrate db-migrate-deploy db-generate db-studio db-reset \
         docker-up docker-down docker-nuke docker-build docker-logs docker-restart docker-up-detached \

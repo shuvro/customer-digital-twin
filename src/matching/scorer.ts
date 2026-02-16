@@ -1,5 +1,6 @@
 import { jaroWinkler } from './fuzzy.js';
-import { normalizeName, normalizeTaxId, normalizePhone, normalizeEmail } from '../utils/normalize.js';
+import { normalizeName, normalizeTaxId, normalizePhone, normalizeEmail, formatDateAsISO } from '../utils/normalize.js';
+import { extractFieldValues } from '../utils/extraction-helpers.js';
 import type { ExtractedPerson } from '../types/extraction.js';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
@@ -40,8 +41,8 @@ export function toCustomerForScoring(customer: {
     dateOfBirth: customer.dateOfBirth,
     gender: customer.gender,
     taxId: customer.taxId,
-    emails: customer.attributes.filter(a => a.field === 'email').map(a => a.value),
-    phones: customer.attributes.filter(a => a.field === 'phone').map(a => a.value),
+    emails: extractFieldValues(customer.attributes, 'email'),
+    phones: extractFieldValues(customer.attributes, 'phone'),
   };
 }
 
@@ -66,7 +67,7 @@ export function scoreCandidate(person: ExtractedPerson, customer: CustomerForSco
       // Check for immutable contradictions
       if (person.dateOfBirth && customer.dateOfBirth) {
         const extractedDob = person.dateOfBirth;
-        const existingDob = customer.dateOfBirth.toISOString().split('T')[0];
+        const existingDob = formatDateAsISO(customer.dateOfBirth)!;
         if (extractedDob !== existingDob) {
           signals.push('dob_conflict');
         }
@@ -125,7 +126,7 @@ export function scoreCandidate(person: ExtractedPerson, customer: CustomerForSco
 
   // DOB exact match (weight: 0.3)
   if (person.dateOfBirth && customer.dateOfBirth) {
-    const existingDob = customer.dateOfBirth.toISOString().split('T')[0];
+    const existingDob = formatDateAsISO(customer.dateOfBirth)!;
     if (person.dateOfBirth === existingDob) {
       score += 0.3;
       signals.push('dob');

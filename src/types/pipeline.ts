@@ -1,5 +1,6 @@
 import type { ExtractionResult, ExtractedPerson } from './extraction.js';
 import type { InboundMessage } from './message.js';
+import type { DecisionCode } from '../generated/prisma/client.js';
 
 export interface PipelineContext {
   message: InboundMessage;
@@ -19,4 +20,6 @@ export interface PipelineDecision {
   customerId?: string;
   score: number;
   signals: string[];
+  reasoning: string;
+  decisionCode: DecisionCode;
 }

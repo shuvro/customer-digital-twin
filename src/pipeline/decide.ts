@@ -10,13 +10,25 @@ export function decideAction(ctx: PipelineContext, searchResult: SearchResult): 
 
   if (!hasIdentifyingInfo(ctx.person)) {
     logger.info({ messageId }, 'No identifying info, skipping');
-    return { action: 'SKIP', score: 0, signals: [] };
+    return {
+      action: 'SKIP',
+      score: 0,
+      signals: [],
+      reasoning: 'No identifying information extracted from message.',
+      decisionCode: 'NO_IDENTIFYING_INFO',
+    };
   }
 
   // No match candidates → CREATE
   if (!bestMatch) {
     logger.info({ messageId }, 'No match candidates, creating new customer');
-    return { action: 'CREATE', score: 0, signals: [] };
+    return {
+      action: 'CREATE',
+      score: 0,
+      signals: [],
+      reasoning: 'No existing customers matched. Creating new customer profile.',
+      decisionCode: 'NO_CANDIDATES',
+    };
   }
 
   // Hard rule: taxId match → always UPDATE
@@ -27,6 +39,8 @@ export function decideAction(ctx: PipelineContext, searchResult: SearchResult): 
       customerId: bestMatch.customerId,
       score: bestMatch.score,
       signals: bestMatch.signals,
+      reasoning: `Exact tax ID match with customer ${bestMatch.customerId}.`,
+      decisionCode: 'TAXID_MATCH',
     };
   }
 
@@ -40,6 +54,8 @@ export function decideAction(ctx: PipelineContext, searchResult: SearchResult): 
       customerId: bestMatch.customerId,
       score: bestMatch.score,
       signals: bestMatch.signals,
+      reasoning: `High confidence match (score ${bestMatch.score.toFixed(2)} >= ${highThreshold}) with customer ${bestMatch.customerId}. Signals: ${bestMatch.signals.join(', ')}.`,
+      decisionCode: 'HIGH_CONFIDENCE',
     };
   }
 
@@ -50,10 +66,18 @@ export function decideAction(ctx: PipelineContext, searchResult: SearchResult): 
       customerId: bestMatch.customerId,
       score: bestMatch.score,
       signals: bestMatch.signals,
+      reasoning: `Medium confidence match (score ${bestMatch.score.toFixed(2)} >= ${lowThreshold}) with ${bestMatch.signals.length} signal(s) for customer ${bestMatch.customerId}. Signals: ${bestMatch.signals.join(', ')}.`,
+      decisionCode: 'MEDIUM_CONFIDENCE',
     };
   }
 
   // Below threshold → CREATE
   logger.info({ messageId, score: bestMatch.score, signals: bestMatch.signals }, 'Below threshold → CREATE');
-  return { action: 'CREATE', score: bestMatch.score, signals: bestMatch.signals };
+  return {
+    action: 'CREATE',
+    score: bestMatch.score,
+    signals: bestMatch.signals,
+    reasoning: `Best match score ${bestMatch.score.toFixed(2)} below threshold ${lowThreshold}. Creating new customer profile.`,
+    decisionCode: 'BELOW_THRESHOLD',
+  };
 }

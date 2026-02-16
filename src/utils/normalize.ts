@@ -1,4 +1,19 @@
 /**
+ * Format a Date as YYYY-MM-DD, or return null for nullish input.
+ */
+export function formatDateAsISO(date: Date | null | undefined): string | null {
+  return date?.toISOString().split('T')[0] ?? null;
+}
+
+/**
+ * Round a number to a given number of decimal places (default 2).
+ */
+export function round2(value: number, decimals: number = 2): number {
+  const multiplier = 10 ** decimals;
+  return Math.round(value * multiplier) / multiplier;
+}
+
+/**
  * Normalize a name for comparison: lowercase, strip diacritics, trim.
  */
 export function normalizeName(name: string): string {
