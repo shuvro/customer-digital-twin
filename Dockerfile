@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -14,20 +14,18 @@ RUN npx tsc
 RUN rm -rf dist/public && cp -r src/public dist/public
 
 # ── Production stage ──────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 
 WORKDIR /app
 
 COPY package.json package-lock.json* .npmrc* ./
-# Full install (prisma CLI needed for migrate deploy at startup)
-RUN npm ci
+RUN npm ci --omit=dev
 
 COPY prisma ./prisma
 RUN npx prisma generate
 
 COPY --from=builder /app/dist ./dist
 
-# wait-for-it functionality via shell loop
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
 

@@ -1,12 +1,25 @@
 {
   "name": "customer-digital-twin",
   "version": "1.0.0",
+  "type": "module",
   "description": "AI-powered Customer Digital Twin service",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "postbuild": "rm -rf dist/public && cp -r src/public dist/public",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:studio": "prisma studio"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
@@ -15,7 +28,7 @@
     "fastify": "^5.3.3",
     "openai": "^4.98.0",
     "pino": "^9.6.0",
-    "pino-pretty": "^13.0.0",
+    "prisma": "^6.8.2",
     "zod": "^3.25.7"
   },
   "devDependencies": {
@@ -23,7 +36,7 @@
     "@types/node": "^22.15.18",
     "@vitest/coverage-v8": "^3.1.4",
     "eslint": "^10.0.0",
-    "prisma": "^6.8.2",
+    "pino-pretty": "^13.0.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.55.0",

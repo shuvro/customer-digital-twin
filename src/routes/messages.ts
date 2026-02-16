@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { postMessageSchema, postMessageBatchSchema } from '../schemas/message.schema.js';
-import { processMessage } from '../pipeline';
+import { processMessage } from '../pipeline/index.js';
 import type { InboundMessage } from '../types/message.js';
 
 export async function messageRoutes(app: FastifyInstance): Promise<void> {
