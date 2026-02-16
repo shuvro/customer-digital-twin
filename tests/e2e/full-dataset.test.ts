@@ -73,16 +73,15 @@ describe('Full Dataset E2E', () => {
     expect(maria!.dateOfBirth).toBeTruthy();
     expect(maria!.dateOfBirth!.toISOString()).toContain('1985-03-14');
 
-    // === María's Mutable Attributes ===
+    // === María's Mutable Attributes (latest messageDate wins) ===
     const mariaEmails = maria!.attributes.filter(a => a.field === 'email' && a.isCurrent);
-    expect(mariaEmails.length).toBeGreaterThanOrEqual(1);
-    const mariaEmailValues = mariaEmails.map(e => e.value);
-    expect(mariaEmailValues).toContain('m.garcia85@gmail.com');
+    expect(mariaEmails).toHaveLength(1);
+    expect(mariaEmails[0].value).toBe('maria.garcia@email.com');
 
     const mariaPhones = maria!.attributes.filter(a => a.field === 'phone' && a.isCurrent);
-    expect(mariaPhones.length).toBeGreaterThanOrEqual(1);
-    const mariaPhoneValues = mariaPhones.map(p => p.value);
-    expect(mariaPhoneValues).toContain('+34 612 345 678');
+    expect(mariaPhones).toHaveLength(1);
+    // Latest phone from doc-003 (Jul 2025)
+    expect(mariaPhones[0].value).toContain('+49');
 
     const mariaAddresses = maria!.attributes.filter(a => a.field === 'address' && a.isCurrent);
     expect(mariaAddresses.length).toBeGreaterThanOrEqual(1);

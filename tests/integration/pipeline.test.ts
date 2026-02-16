@@ -111,8 +111,8 @@ describe('Pipeline Integration', () => {
     expect(attrs[0].messageDate.toISOString()).toContain('2025-06-01');
   });
 
-  it('persists multiple current emails and phones (list fields)', async () => {
-    // Message with first email
+  it('latest messageDate wins for list fields (email, phone)', async () => {
+    // Older message with first email/phone
     await app.inject({
       method: 'POST',
       url: '/api/messages',
@@ -124,7 +124,7 @@ describe('Pipeline Integration', () => {
       },
     });
 
-    // Message with second email and phone
+    // Newer message with updated email and phone
     await app.inject({
       method: 'POST',
       url: '/api/messages',
@@ -139,20 +139,25 @@ describe('Pipeline Integration', () => {
     const customer = await prisma.customer.findFirst({ where: { taxId: '12345678A' } });
     expect(customer).toBeTruthy();
 
-    // Should have 2 current emails
+    // Only the latest email should be current (latest messageDate wins)
     const currentEmails = await prisma.customerAttribute.findMany({
       where: { customerId: customer!.id, field: 'email', isCurrent: true },
     });
-    expect(currentEmails).toHaveLength(2);
-    const emailValues = currentEmails.map(e => e.value).sort();
-    expect(emailValues).toContain('m.garcia85@gmail.com');
-    expect(emailValues).toContain('maria.garcia@email.com');
+    expect(currentEmails).toHaveLength(1);
+    expect(currentEmails[0].value).toBe('maria.garcia@email.com');
 
-    // Should have 2 current phones
+    // Only the latest phone should be current
     const currentPhones = await prisma.customerAttribute.findMany({
       where: { customerId: customer!.id, field: 'phone', isCurrent: true },
     });
-    expect(currentPhones).toHaveLength(2);
+    expect(currentPhones).toHaveLength(1);
+    expect(currentPhones[0].value).toBe('+49 171 2345678');
+
+    // Old values preserved in history
+    const allEmails = await prisma.customerAttribute.findMany({
+      where: { customerId: customer!.id, field: 'email' },
+    });
+    expect(allEmails.length).toBeGreaterThanOrEqual(2);
   });
 
   it('accumulates insights without overwriting', async () => {

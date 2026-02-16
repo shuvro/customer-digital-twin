@@ -262,16 +262,21 @@ export async function recalculateCurrent(
 
   if (allEntries.length === 0) return;
 
-  // The first entry (latest messageDate) is the current value
-  const currentId = allEntries[0].id;
+  // All entries from the latest messageDate are current.
+  // This handles the case where a single message mentions multiple values
+  // for the same field (e.g., two phone numbers in one message).
+  const latestDate = allEntries[0].messageDate.getTime();
+  const currentIds = allEntries
+    .filter(e => e.messageDate.getTime() === latestDate)
+    .map(e => e.id);
 
   await tx.customerAttribute.updateMany({
     where: { customerId, field, isCurrent: true },
     data: { isCurrent: false },
   });
 
-  await tx.customerAttribute.update({
-    where: { id: currentId },
+  await tx.customerAttribute.updateMany({
+    where: { id: { in: currentIds } },
     data: { isCurrent: true },
   });
 }
