@@ -9,7 +9,7 @@ export function buildContextEnhancedUserPrompt(message: InboundMessage, context:
   lines.push('The following is the current profile of an existing customer that likely matches the person in this message.');
   lines.push('');
   lines.push('Use this context to:');
-  lines.push('- Resolve name ambiguities: "Maria" likely refers to "María García López" if context matches');
+  lines.push('- Resolve name ambiguities: "Ana" likely refers to "Ana Martínez Ruiz" if context matches');
   lines.push('- Complete partial data: a city name alone can be matched to a known address');
   lines.push('- Disambiguate contacts: if the message mentions a phone number, check if it updates or confirms a known one');
   lines.push('- Increase confidence: if extracted data MATCHES the known profile, set confidence to 1.0');

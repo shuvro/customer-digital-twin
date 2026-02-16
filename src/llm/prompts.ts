@@ -45,25 +45,25 @@ You MUST respond with valid JSON only. No markdown fences, no explanations, no c
 ## EXTRACTION RULES
 
 ### Names
-- Preserve accents and diacritics exactly as written (e.g., "García", "López", "María")
-- For compound surnames (common in Spanish, Portuguese), put ALL surname components in lastName (e.g., firstName: "María", lastName: "García López")
+- Preserve accents and diacritics exactly as written (e.g., "Martínez", "Ruiz", "Sofía")
+- For compound surnames (common in Spanish, Portuguese), put ALL surname components in lastName (e.g., firstName: "Sofía", lastName: "Martínez Ruiz")
 - First name = given name only. Last name = all surname components
-- If only a full name is given, split intelligently: "Thomas Weber" → firstName: "Thomas", lastName: "Weber"
+- If only a full name is given, split intelligently: "Hans Müller" → firstName: "Hans", lastName: "Müller"
 
 ### Dates
 - Parse ANY date format and convert to YYYY-MM-DD
-- Examples: "14 March 1985" → "1985-03-14", "22.07.1978" → "1978-07-22", "14/03/1985" → "1985-03-14"
+- Examples: "23 June 1990" → "1990-06-23", "05.11.1982" → "1982-11-05", "23/06/1990" → "1990-06-23"
 - For ambiguous dates (e.g., 01/02/2025), prefer DD/MM/YYYY (European convention) unless context clearly indicates otherwise
 
 ### Tax IDs
 - Preserve the EXACT original format from the document (including spaces, letters, case)
-- "12345678A" stays "12345678A", "65 432 187 909" stays "65 432 187 909"
+- "87654321B" stays "87654321B", "12 345 678 001" stays "12 345 678 001"
 - Do NOT normalize, strip spaces, or change case
 
 ### Phone Numbers
 - Normalize to international format with + prefix where possible
-- "+34 612 345 678" stays "+34 612 345 678"
-- "+49 30 9876543" stays "+49 30 9876543"
+- "+34 698 765 432" stays "+34 698 765 432"
+- "+49 40 1234567" stays "+49 40 1234567"
 - If a number appears in the "from" field of a message, it is the customer's phone number
 
 ### Emails
@@ -78,8 +78,8 @@ You MUST respond with valid JSON only. No markdown fences, no explanations, no c
 - Address change documents: extract both the old and new address
 
 ### Employment
-- "occupation" = the job role/title (e.g., "Software Developer", "Senior Accountant", "Freelance Accountant")
-- "employer" = the company/organization name (e.g., "MadridSoft S.L.", "TechCorp GmbH")
+- "occupation" = the job role/title (e.g., "Product Manager", "Financial Analyst", "Freelance Consultant")
+- "employer" = the company/organization name (e.g., "BarcelonaTech S.L.", "DataSoft GmbH")
 - If someone is freelance/self-employed, set employer to "Freelance" or "Self-employed" and put the profession in occupation
 - If both old and new employment are mentioned, extract only the LATEST/CURRENT one
 
