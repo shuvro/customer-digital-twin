@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import { scoreCandidate, type CustomerForScoring } from '../matching/scorer.js';
+import { scoreCandidate, toCustomerForScoring } from '../matching/scorer.js';
 import type { ExtractedPerson } from '../types/extraction.js';
 
 export interface DuplicatePair {
@@ -43,14 +43,11 @@ export async function findDuplicates(minScore?: number): Promise<DuplicatesResul
       // scoreCandidate is directional — it only iterates fields present on the
       // "person" arg.  A sparse A scored against a rich B can under-score while
       // B→A would pass the threshold.  Score both directions and keep the max.
-      const personA: ExtractedPerson = customerToPerson(a);
-      const personB: ExtractedPerson = customerToPerson(b);
+      const personA = customerToPerson(a);
+      const personB = customerToPerson(b);
 
-      const scoringA: CustomerForScoring = customerToScoring(a);
-      const scoringB: CustomerForScoring = customerToScoring(b);
-
-      const ab = scoreCandidate(personA, scoringB);
-      const ba = scoreCandidate(personB, scoringA);
+      const ab = scoreCandidate(personA, toCustomerForScoring(b));
+      const ba = scoreCandidate(personB, toCustomerForScoring(a));
 
       const best = ab.score >= ba.score ? ab : ba;
 
@@ -83,19 +80,6 @@ function customerToPerson(c: CustomerWithAttrs): ExtractedPerson {
     gender: c.gender ?? undefined,
     taxId: c.taxId ?? undefined,
     nationality: c.nationality ?? undefined,
-    emails: c.attributes.filter((a) => a.field === 'email').map((a) => a.value),
-    phones: c.attributes.filter((a) => a.field === 'phone').map((a) => a.value),
-  };
-}
-
-function customerToScoring(c: CustomerWithAttrs): CustomerForScoring {
-  return {
-    id: c.id,
-    firstName: c.firstName,
-    lastName: c.lastName,
-    dateOfBirth: c.dateOfBirth,
-    gender: c.gender,
-    taxId: c.taxId,
     emails: c.attributes.filter((a) => a.field === 'email').map((a) => a.value),
     phones: c.attributes.filter((a) => a.field === 'phone').map((a) => a.value),
   };

@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import type { CustomerSummary, CustomerDetail } from '../types/customer.js';
+import { LIST_FIELDS } from '../types/fields.js';
 
 export async function listCustomers(): Promise<CustomerSummary[]> {
   const customers = await prisma.customer.findMany({
@@ -9,9 +10,6 @@ export async function listCustomers(): Promise<CustomerSummary[]> {
       _count: { select: { messages: true } },
     },
   });
-
-  // Fields that can have multiple concurrent current values
-  const LIST_FIELDS = new Set(['email', 'phone', 'address']);
 
   return customers.map((c) => {
     const currentAttributes: Record<string, string | string[]> = {};

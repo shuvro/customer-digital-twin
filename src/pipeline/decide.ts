@@ -1,24 +1,14 @@
 import type { SearchResult } from './search.js';
 import type { PipelineContext, PipelineDecision } from '../types/pipeline.js';
 import { config } from '../config.js';
+import { hasIdentifyingInfo } from '../utils/extraction-helpers.js';
 import { logger } from '../logger.js';
 
 export function decideAction(ctx: PipelineContext, searchResult: SearchResult): PipelineDecision {
   const { bestMatch } = searchResult;
   const messageId = ctx.message.id;
 
-  // No identifying info at all → SKIP
-  if (!ctx.person) {
-    logger.info({ messageId }, 'No person extracted, skipping');
-    return { action: 'SKIP', score: 0, signals: [] };
-  }
-
-  const hasIdentity = ctx.person.firstName || ctx.person.lastName || ctx.person.taxId ||
-    (ctx.person.emails && ctx.person.emails.length > 0) ||
-    (ctx.person.phones && ctx.person.phones.length > 0) ||
-    ctx.person.dateOfBirth;
-
-  if (!hasIdentity) {
+  if (!hasIdentifyingInfo(ctx.person)) {
     logger.info({ messageId }, 'No identifying info, skipping');
     return { action: 'SKIP', score: 0, signals: [] };
   }

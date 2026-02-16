@@ -3,6 +3,7 @@ import { logger } from '../logger.js';
 import { recalculateCurrent, type TxClient } from '../pipeline/persist.js';
 import { metrics } from '../observability/metrics.js';
 import { CustomerNotFoundError } from '../errors.js';
+import { hashText } from '../utils/hash.js';
 import type { Prisma } from '@prisma/client';
 
 export interface MergeResult {
@@ -194,12 +195,3 @@ async function updateDenormalizedFields(tx: TxClient, customerId: string): Promi
   }
 }
 
-function hashText(text: string): number {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return hash;
-}

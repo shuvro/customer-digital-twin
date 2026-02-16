@@ -244,8 +244,6 @@ async function upsertAttribute(
 // For all mutable fields (scalar and list alike), the entry with the most
 // recent messageDate is the single "current" value. Older values remain in
 // the database as history but with isCurrent=false.
-export const LIST_FIELDS = new Set(['email', 'phone', 'address']);
-
 export async function recalculateCurrent(
   tx: TxClient,
   customerId: string,

@@ -1,5 +1,6 @@
 import { findMatchCandidates, type MatchCandidate } from '../matching/scorer.js';
 import type { PipelineContext } from '../types/pipeline.js';
+import { hasIdentifyingInfo } from '../utils/extraction-helpers.js';
 import { logger } from '../logger.js';
 
 export interface SearchResult {
@@ -9,22 +10,12 @@ export interface SearchResult {
 
 export async function searchCustomers(ctx: PipelineContext): Promise<SearchResult> {
   const person = ctx.person;
-  if (!person) {
-    return { candidates: [], bestMatch: null };
-  }
-
-  // Check if we have any identifying info at all
-  const hasIdentity = person.firstName || person.lastName || person.taxId ||
-    (person.emails && person.emails.length > 0) ||
-    (person.phones && person.phones.length > 0) ||
-    person.dateOfBirth;
-
-  if (!hasIdentity) {
+  if (!hasIdentifyingInfo(person)) {
     logger.info({ messageId: ctx.message.id }, 'No identifying info extracted, skipping search');
     return { candidates: [], bestMatch: null };
   }
 
-  const candidates = await findMatchCandidates(person);
+  const candidates = await findMatchCandidates(person!);
 
   logger.info({
     messageId: ctx.message.id,

@@ -23,6 +23,28 @@ export interface CustomerForScoring {
   phones: string[];
 }
 
+/** Convert a Prisma customer (with included current attributes) to a scoring DTO. */
+export function toCustomerForScoring(customer: {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  dateOfBirth: Date | null;
+  gender: string | null;
+  taxId: string | null;
+  attributes: Array<{ field: string; value: string }>;
+}): CustomerForScoring {
+  return {
+    id: customer.id,
+    firstName: customer.firstName,
+    lastName: customer.lastName,
+    dateOfBirth: customer.dateOfBirth,
+    gender: customer.gender,
+    taxId: customer.taxId,
+    emails: customer.attributes.filter(a => a.field === 'email').map(a => a.value),
+    phones: customer.attributes.filter(a => a.field === 'phone').map(a => a.value),
+  };
+}
+
 /**
  * Pure scoring function — no database access.
  * Computes a match score between an extracted person and an existing customer.
@@ -170,18 +192,7 @@ export async function findMatchCandidates(person: ExtractedPerson): Promise<Matc
   const candidates: MatchCandidate[] = [];
 
   for (const customer of customers) {
-    const customerForScoring: CustomerForScoring = {
-      id: customer.id,
-      firstName: customer.firstName,
-      lastName: customer.lastName,
-      dateOfBirth: customer.dateOfBirth,
-      gender: customer.gender,
-      taxId: customer.taxId,
-      emails: customer.attributes.filter(a => a.field === 'email').map(a => a.value),
-      phones: customer.attributes.filter(a => a.field === 'phone').map(a => a.value),
-    };
-
-    const candidate = scoreCandidate(person, customerForScoring);
+    const candidate = scoreCandidate(person, toCustomerForScoring(customer));
 
     // Boost direct lookup hits to ensure they clear the highThreshold
     if (directHitIds.has(customer.id) && candidate.score < 0.8) {

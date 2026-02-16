@@ -1,16 +1,25 @@
 import OpenAI from 'openai';
 import { config } from '../config.js';
 
-export function createPrimaryClient(): OpenAI {
-  return new OpenAI({
-    apiKey: config.nebius.apiKey,
-    baseURL: config.nebius.primary.baseURL,
-  });
+let primaryClient: OpenAI | null = null;
+let fallbackClient: OpenAI | null = null;
+
+export function getPrimaryClient(): OpenAI {
+  if (!primaryClient) {
+    primaryClient = new OpenAI({
+      apiKey: config.nebius.apiKey,
+      baseURL: config.nebius.primary.baseURL,
+    });
+  }
+  return primaryClient;
 }
 
-export function createFallbackClient(): OpenAI {
-  return new OpenAI({
-    apiKey: config.nebius.apiKey,
-    baseURL: config.nebius.fallback.baseURL,
-  });
+export function getFallbackClient(): OpenAI {
+  if (!fallbackClient) {
+    fallbackClient = new OpenAI({
+      apiKey: config.nebius.apiKey,
+      baseURL: config.nebius.fallback.baseURL,
+    });
+  }
+  return fallbackClient;
 }

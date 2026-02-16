@@ -8,6 +8,7 @@ import type { InboundMessage } from '../types/message.js';
 import type { PipelineContext } from '../types/pipeline.js';
 import { Prisma } from '@prisma/client';
 import { metrics } from '../observability/metrics.js';
+import { hashText } from '../utils/hash.js';
 import type { Logger } from 'pino';
 
 // If a message has been PROCESSING for longer than this, treat it as abandoned
@@ -247,16 +248,6 @@ async function markFailed(log: Logger, messageId: string, message: InboundMessag
   } catch {
     log.error({ messageId }, 'Failed to mark message as FAILED');
   }
-}
-
-function hashText(text: string): number {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return hash;
 }
 
 function extractionConfidence(extraction: { confidence: Record<string, number> }): number {

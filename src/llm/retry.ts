@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { createPrimaryClient, createFallbackClient } from './client.js';
+import { getPrimaryClient, getFallbackClient } from './client.js';
 import { config } from '../config.js';
 import { LLMExtractionError } from '../errors.js';
 import { logger } from '../logger.js';
@@ -36,7 +36,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function callWithRetryAndFallback(opts: LLMCallOptions): Promise<string> {
-  const primary = createPrimaryClient();
+  const primary = getPrimaryClient();
   const { maxRetries, retryBaseDelayMs } = config.nebius;
 
   // Try primary model with retries
@@ -56,7 +56,7 @@ export async function callWithRetryAndFallback(opts: LLMCallOptions): Promise<st
 
   // Try fallback model once
   logger.info('Falling back to secondary model');
-  const fallback = createFallbackClient();
+  const fallback = getFallbackClient();
   try {
     return await callModel(fallback, config.nebius.fallback.model, opts);
   } catch (err) {
